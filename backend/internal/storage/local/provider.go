@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 )
@@ -30,7 +31,7 @@ func (s LocalProvider) Upload(ctx context.Context, path string, file io.Reader) 
 	io.Copy(dst, file)
 	return nil
 }
-func (s LocalProvider) Download(ctx context.Context, path string) (io.Reader, error) {
+func (s LocalProvider) Download(ctx context.Context, path string) (io.ReadCloser, error) {
 	return os.Open(path)
 }
 func (s LocalProvider) Move(ctx context.Context, previousPath, newPath string) error {
@@ -54,4 +55,26 @@ func (s LocalProvider) Exists(ctx context.Context, path string) (bool, error) {
 }
 func (s LocalProvider) GetUrl(ctx context.Context, path string) (string, error) {
 	return fmt.Sprintf("%s/files/%s", s.path, path), nil
+}
+
+func (s LocalProvider) List(ctx context.Context, prefix string, cursor *string, limit int) ([]string, *string, error) {
+	var files []string
+	err := filepath.Walk(s.path, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(s.path, path)
+		if err != nil {
+			return err
+		}
+		files = append(files, relative)
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return files, nil, nil
 }
