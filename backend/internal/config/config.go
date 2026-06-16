@@ -11,12 +11,14 @@ type S3Config struct {
 	AccessKeyID     string
 	SecretAccessKey string
 	Endpoint        string
+	Bucket          string
 }
 type LocalStorageConfig struct {
 	Path string
 }
 type SharePointConfig struct {
 	SiteURL      string
+	SiteID       string
 	TenantID     string
 	ClientID     string
 	ClientSecret string
@@ -24,22 +26,26 @@ type SharePointConfig struct {
 	Folder       string
 }
 type Config struct {
-	S3           S3Config
-	LocalStorage LocalStorageConfig
-	SharePoint   SharePointConfig
+	StorageProvider string
+	S3              S3Config
+	LocalStorage    LocalStorageConfig
+	SharePoint      SharePointConfig
 }
 
 func Load(env string) Config {
 	loadDotEnv(env)
 	return Config{
+		StorageProvider: getEnv("STORAGE_PROVIDER"),
 		S3: S3Config{
 			Region:          getEnv("S3_REGION"),
 			AccessKeyID:     getEnv("S3_ACCESS_KEY_ID"),
 			SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY"),
 			Endpoint:        getEnv("S3_ENDPOINT"),
+			Bucket:          getEnv("S3_BUCKET"),
 		},
 		SharePoint: SharePointConfig{
 			SiteURL:      getEnv("SHAREPOINT_SITE_URL"),
+			SiteID:       getEnv("SHAREPOINT_SITE_ID"),
 			TenantID:     getEnv("SHAREPOINT_TENANT_ID"),
 			ClientID:     getEnv("SHAREPOINT_CLIENT_ID"),
 			ClientSecret: getEnv("SHAREPOINT_CLIENT_SECRET"),
