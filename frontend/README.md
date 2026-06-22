@@ -4,17 +4,17 @@ Electronic Document Management System — frontend built with [Nuxt 4](https://n
 
 ## Tech Stack
 
-| Layer | Tool |
-|-------|------|
-| Framework | Nuxt 4 (Vue 3 + TypeScript) |
-| Styling | Tailwind CSS v4 + `tw-animate-css` |
-| UI Components | shadcn-vue, Reka UI, Vaul Vue |
-| Forms | VeeValidate + Zod |
-| Icons | Lucide Vue (via `@nuxt/icon`) |
-| Carousel | Embla Carousel Vue |
-| Utilities | VueUse, Class Variance Authority, clsx, tailwind-merge |
-| Linting | Oxlint |
-| Formatting | Oxfmt |
+| Layer         | Tool                                                   |
+| ------------- | ------------------------------------------------------ |
+| Framework     | Nuxt 4 (Vue 3 + TypeScript)                            |
+| Styling       | Tailwind CSS v4 + `tw-animate-css`                     |
+| UI Components | shadcn-vue, Reka UI, Vaul Vue                          |
+| Forms         | VeeValidate + Zod                                      |
+| Icons         | Lucide Vue (via `@nuxt/icon`)                          |
+| Carousel      | Embla Carousel Vue                                     |
+| Utilities     | VueUse, Class Variance Authority, clsx, tailwind-merge |
+| Linting       | Oxlint                                                 |
+| Formatting    | Oxfmt                                                  |
 
 ## Prerequisites
 
@@ -91,24 +91,28 @@ Oxlint is configured via `.oxlintrc.json` at the project root.
 ## Conventions
 
 ### Vue Components
+
 - Single File Components (SFC) with `<script setup lang="ts">`
 - Component filenames in **PascalCase** (e.g. `UserAvatar.vue`)
 - Prefer Composition API over Options API
 
 ### TypeScript
+
 - Use TypeScript in all `.vue` SFCs and `.ts` files
 - Prefer arrow functions with explicit return types:
 
 ```ts
-const funcName = async (param1: type): Promise<type> => {}
+const funcName = async (param1: type): Promise<type> => {};
 ```
 
 ### Styling
+
 - Use Tailwind utility classes
 - Avoid scoped styles unless absolutely necessary
 - Use `cva()` (class-variance-authority) for component variants
 
 ### shadcn-vue
+
 - Components are managed via the shadcn-vue CLI
 - Add new components: `npx shadcn-vue add <component>`
 - Configuration lives in `components.json`
