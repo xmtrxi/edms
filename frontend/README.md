@@ -2,11 +2,6 @@
 
 Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
 
-## Installtion
-
-```bash
-pnpm create nuxt@latest --template=kemboi22/nuxt-starter-kit
-```
 
 ## Setup
 
@@ -78,4 +73,23 @@ yarn preview
 bun run preview
 ```
 
+## Code Formart 
+
+```bash
+pnpm fmt
+```
+## Linting 
+```bash
+pnpm lint:fix
+```
+
+## Code Style 
+
+### VueJS
+ - Use SFC(Single File Components) in PascalCase
+ - Use Typescript in SFC or TS files 
+ - For functions write 
+ ```ts 
+ const funcName = async (param1: type) : type => {}
+ ```
 Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
