@@ -6,33 +6,22 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
-  backend:
-    name: Backend (Go)
+  format:
+    name: Format & Fix
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
           cache-dependency-path: backend/go.sum
-
-      - name: Check formatting (gofmt)
-        run: |
-          unformatted=$(gofmt -l backend/)
-          if [ -n "$unformatted" ]; then
-            echo "Unformatted files:"
-            echo "$unformatted"
-            exit 1
-          fi
-          echo "All files are properly formatted."
-
-  frontend:
-    name: Frontend (Nuxt / Vue)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
       - uses: pnpm/action-setup@v4
         with:
@@ -44,14 +33,29 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
         working-directory: frontend
 
-      - name: Check formatting (Oxfmt)
-        run: pnpm fmt:check
+      - name: Format backend (gofmt)
+        run: |
+          unformatted=$(gofmt -l backend/)
+          if [ -n "$unformatted" ]; then
+            echo "Formatting: $unformatted"
+            gofmt -w backend/
+          else
+            echo "All Go files are properly formatted."
+          fi
+
+      - name: Format & lint frontend
+        run: |
+          pnpm fmt
+          pnpm lint:fix
         working-directory: frontend
 
-      - name: Lint (Oxlint)
-        run: pnpm lint
-        working-directory: frontend
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "style: auto-format code [skip ci]"
+          commit_user_name: "github-actions[bot]"
+          commit_user_email: "github-actions[bot]@users.noreply.github.com"
