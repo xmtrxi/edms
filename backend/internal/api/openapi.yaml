@@ -1,0 +1,212 @@
+openapi: 3.0.3
+info:
+  title: EDMS API
+  version: 0.1.0
+  description: API for document digitization, storage, OCR processing, search, sharing, and optional signing.
+servers:
+  - url: /api
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [System]
+      security: []
+      summary: API health check
+      responses:
+        "200":
+          description: Healthy API response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /auth/register:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Register a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Registered user and token
+  /auth/login:
+    post:
+      tags: [Auth]
+      security: []
+      summary: Login a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Auth token
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /documents:
+    get:
+      tags: [Documents]
+      summary: List documents
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+        - in: query
+          name: status
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Documents
+    post:
+      tags: [Documents]
+      summary: Upload a document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: string
+      responses:
+        "201":
+          description: Created document
+  /documents/{id}:
+    get:
+      tags: [Documents]
+      summary: Get a document
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Document
+    delete:
+      tags: [Documents]
+      summary: Delete a document
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+  /documents/{id}/download:
+    get:
+      tags: [Documents]
+      summary: Download a document
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: File stream
+  /documents/{id}/sign:
+    post:
+      tags: [Signing]
+      summary: Create a signing request when signing is enabled
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "201":
+          description: Signing request
+        "404":
+          description: Route unavailable when signing is disabled
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        env:
+          type: string
+          example: development
+        features:
+          type: object
+          additionalProperties:
+            type: boolean
+    RegisterRequest:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        status:
+          type: string
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+        tenant_id:
+          type: string
+        owner_id:
+          type: string
+        name:
+          type: string
+        mime_type:
+          type: string
+        size:
+          type: integer
+          format: int64
+        status:
+          type: string

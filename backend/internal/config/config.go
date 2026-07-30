@@ -3,8 +3,22 @@ package config
 import (
 	"bufio"
 	"os"
+	"strconv"
 	"strings"
 )
+
+type AppConfig struct {
+	Env  string
+	Port string
+}
+
+type DatabaseConfig struct {
+	URL       string
+	Namespace string
+	Database  string
+	User      string
+	Password  string
+}
 
 type S3Config struct {
 	Region          string
@@ -25,16 +39,36 @@ type SharePointConfig struct {
 	DriveID      string
 	Folder       string
 }
+type SigningConfig struct {
+	Enabled          bool
+	Provider         string
+	DocumensoBaseURL string
+	DocumensoAPIKey  string
+}
 type Config struct {
+	App             AppConfig
+	Database        DatabaseConfig
 	StorageProvider string
 	S3              S3Config
 	LocalStorage    LocalStorageConfig
 	SharePoint      SharePointConfig
+	Signing         SigningConfig
 }
 
 func Load(env string) Config {
 	loadDotEnv(env)
 	return Config{
+		App: AppConfig{
+			Env:  getEnvDefault("APP_ENV", "development"),
+			Port: getEnvDefault("APP_PORT", "8080"),
+		},
+		Database: DatabaseConfig{
+			URL:       getEnv("SURREALDB_URL"),
+			Namespace: getEnvDefault("SURREALDB_NAMESPACE", "edms"),
+			Database:  getEnvDefault("SURREALDB_DATABASE", "edms"),
+			User:      getEnv("SURREALDB_USER"),
+			Password:  getEnv("SURREALDB_PASS"),
+		},
 		StorageProvider: getEnv("STORAGE_PROVIDER"),
 		S3: S3Config{
 			Region:          getEnv("S3_REGION"),
@@ -54,6 +88,12 @@ func Load(env string) Config {
 		},
 		LocalStorage: LocalStorageConfig{
 			Path: getEnv("LOCAL_STORAGE_PATH"),
+		},
+		Signing: SigningConfig{
+			Enabled:          getEnvBool("SIGNING_ENABLED", false),
+			Provider:         getEnv("SIGNING_PROVIDER"),
+			DocumensoBaseURL: getEnv("DOCUMENSO_BASE_URL"),
+			DocumensoAPIKey:  getEnv("DOCUMENSO_API_KEY"),
 		},
 	}
 }
@@ -88,4 +128,27 @@ func loadDotEnv(filename string) {
 }
 func getEnv(key string) string {
 	return os.Getenv(key)
+}
+
+func getEnvDefault(key string, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	return value
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }
