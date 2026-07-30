@@ -67,12 +67,7 @@ export interface TenantMemberWithUser extends TenantMember {
 
 // ── Documents ───────────────────────────────────────────────────────────────
 
-export type DocumentStatus =
-  | "uploaded"
-  | "processing"
-  | "ready"
-  | "failed"
-  | "archived";
+export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed" | "archived";
 
 export interface Document {
   id: string;
@@ -196,12 +191,7 @@ export interface CreateShareRequest {
 
 // ── Signing Requests ────────────────────────────────────────────────────────
 
-export type SigningStatus =
-  | "draft"
-  | "sent"
-  | "completed"
-  | "cancelled"
-  | "failed";
+export type SigningStatus = "draft" | "sent" | "completed" | "cancelled" | "failed";
 
 export interface SigningRequest {
   id: string;
@@ -216,11 +206,7 @@ export interface SigningRequest {
 
 // ── Processing Jobs ─────────────────────────────────────────────────────────
 
-export type ProcessingJobStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed";
+export type ProcessingJobStatus = "queued" | "running" | "completed" | "failed";
 
 export interface ProcessingJob {
   id: string;
@@ -255,11 +241,7 @@ export interface AuditEventWithActor extends AuditEvent {
 
 // ── Workflow Requests ───────────────────────────────────────────────────────
 
-export type WorkflowStatus =
-  | "pending"
-  | "approved"
-  | "rejected"
-  | "canceled";
+export type WorkflowStatus = "pending" | "approved" | "rejected" | "canceled";
 
 export interface WorkflowRequest {
   id: string;
