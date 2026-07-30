@@ -75,6 +75,16 @@ paths:
       responses:
         "200":
           description: Documents
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Document"
     post:
       tags: [Documents]
       summary: Upload a document
@@ -94,6 +104,10 @@ paths:
       responses:
         "201":
           description: Created document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
   /documents/{id}:
     get:
       tags: [Documents]
@@ -103,6 +117,10 @@ paths:
       responses:
         "200":
           description: Document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
     delete:
       tags: [Documents]
       summary: Delete a document
@@ -150,6 +168,12 @@ components:
       properties:
         status:
           type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
           example: ok
         env:
           type: string

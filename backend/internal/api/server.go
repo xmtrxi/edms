@@ -10,18 +10,25 @@ import (
 )
 
 type Server struct {
-	echo   *echo.Echo
-	config config.Config
+	echo      *echo.Echo
+	config    config.Config
+	documents *documentStore
 }
 
 func New(cfg config.Config) *Server {
 	e := echo.New()
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodDelete, http.MethodOptions},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+	}))
 
 	s := &Server{
-		echo:   e,
-		config: cfg,
+		echo:      e,
+		config:    cfg,
+		documents: newDocumentStore(),
 	}
 	s.registerRoutes()
 
@@ -50,6 +57,11 @@ func (s *Server) registerRoutes() {
 	api.GET("/health", s.health)
 
 	documents := api.Group("/documents")
+	documents.GET("", s.listDocuments)
+	documents.POST("", s.uploadDocument)
+	documents.GET("/:id", s.getDocument)
+	documents.GET("/:id/download", s.downloadDocument)
+	documents.DELETE("/:id", s.deleteDocument)
 	if s.config.Signing.Enabled {
 		documents.POST("/:id/sign", s.signDocument)
 	}
