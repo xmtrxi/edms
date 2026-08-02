@@ -8,15 +8,17 @@ import (
 	"testing"
 
 	"github.com/xmtrxi/edms/internal/config"
+	"github.com/xmtrxi/edms/internal/handler"
 )
 
 func TestHealthReportsSigningDisabledByDefault(t *testing.T) {
-	server := New(config.Config{
+	cfg := config.Config{
 		App: config.AppConfig{
 			Env:  "test",
 			Port: "0",
 		},
-	})
+	}
+	server := New(cfg, handler.Deps{Cfg: cfg})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -44,7 +46,7 @@ func TestHealthReportsSigningDisabledByDefault(t *testing.T) {
 }
 
 func TestSigningRouteIsOptIn(t *testing.T) {
-	disabled := New(config.Config{})
+	disabled := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
 	disabledReq := httptest.NewRequest(http.MethodPost, "/api/documents/documents:1/sign", nil)
 	disabledRec := httptest.NewRecorder()
 	disabled.Handler().ServeHTTP(disabledRec, disabledReq)
@@ -53,22 +55,23 @@ func TestSigningRouteIsOptIn(t *testing.T) {
 		t.Fatalf("expected disabled signing route status %d, got %d", http.StatusNotFound, disabledRec.Code)
 	}
 
-	enabled := New(config.Config{
+	enabledCfg := config.Config{
 		Signing: config.SigningConfig{
 			Enabled: true,
 		},
-	})
+	}
+	enabled := New(enabledCfg, handler.Deps{Cfg: enabledCfg})
 	enabledReq := httptest.NewRequest(http.MethodPost, "/api/documents/documents:1/sign", nil)
 	enabledRec := httptest.NewRecorder()
 	enabled.Handler().ServeHTTP(enabledRec, enabledReq)
 
-	if enabledRec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected enabled signing route status %d, got %d", http.StatusNotImplemented, enabledRec.Code)
+	if enabledRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected signing route to require auth (401), got %d", enabledRec.Code)
 	}
 }
 
 func TestOpenAPIDocsAreServed(t *testing.T) {
-	server := New(config.Config{})
+	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
 
 	specReq := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	specRec := httptest.NewRecorder()

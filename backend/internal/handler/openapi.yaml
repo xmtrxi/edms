@@ -221,8 +221,6 @@ components:
       properties:
         id:
           type: string
-        tenant_id:
-          type: string
         owner_id:
           type: string
         name:

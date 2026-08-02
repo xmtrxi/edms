@@ -9,7 +9,7 @@ import (
 
 type createProcessingJobsTable struct{}
 
-func (m createProcessingJobsTable) Name() string { return "012_create_processing_jobs_table" }
+func (m createProcessingJobsTable) Name() string { return "010_create_processing_jobs_table" }
 
 func (m createProcessingJobsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "processing_jobs", func(t *surrealgoorm.Table) {

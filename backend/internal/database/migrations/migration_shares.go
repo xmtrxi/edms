@@ -8,7 +8,7 @@ import (
 
 type createSharesTable struct{}
 
-func (m createSharesTable) Name() string { return "010_create_shares_table" }
+func (m createSharesTable) Name() string { return "008_create_shares_table" }
 
 func (m createSharesTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "shares", func(t *surrealgoorm.Table) {

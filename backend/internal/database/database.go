@@ -52,11 +52,15 @@ func (db *DB) Close(ctx context.Context) error {
 }
 
 func (db *DB) Client() *surrealdb.DB {
+	if db == nil {
+		return nil
+	}
 	return db.client
 }
 
-func Query[T any](db *DB, table string) surrealgoorm.QueryBuilder[T] {
-	return surrealgoorm.Query[T](db.client, table)
+func (db *DB) Health(ctx context.Context) error {
+	_, err := surrealdb.Query[any](ctx, db.client, "RETURN 1;", nil)
+	return err
 }
 
 func AutoMigrate(ctx context.Context, db *DB, migrations []surrealgoorm.Migration) error {

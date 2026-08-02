@@ -11,21 +11,19 @@ import (
 func TestMigrationsAreRegisteredInOrder(t *testing.T) {
 	migrations := Migrations()
 	expected := []string{
-		"001_create_tenants_table",
-		"002_create_users_table",
-		"003_create_tenant_members_table",
-		"004_create_documents_table",
-		"005_create_document_versions_table",
-		"006_create_tags_table",
-		"007_create_document_tags_table",
-		"008_create_document_extractions_table",
-		"009_create_comments_table",
-		"010_create_shares_table",
-		"011_create_signing_requests_table",
-		"012_create_processing_jobs_table",
-		"013_create_audit_events_table",
-		"014_create_workflow_requests_table",
-		"015_create_workflow_actions_table",
+		"001_create_users_table",
+		"002_create_documents_table",
+		"003_create_document_versions_table",
+		"004_create_tags_table",
+		"005_create_document_tags_table",
+		"006_create_document_extractions_table",
+		"007_create_comments_table",
+		"008_create_shares_table",
+		"009_create_signing_requests_table",
+		"010_create_processing_jobs_table",
+		"011_create_audit_events_table",
+		"012_create_workflow_requests_table",
+		"013_create_workflow_actions_table",
 	}
 	if len(migrations) != len(expected) {
 		t.Fatalf("expected %d migrations, got %d", len(expected), len(migrations))

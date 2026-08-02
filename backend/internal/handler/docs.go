@@ -1,4 +1,4 @@
-package api
+package handler
 
 import (
 	_ "embed"
@@ -29,10 +29,21 @@ const swaggerHTML = `<!doctype html>
 </body>
 </html>`
 
-func (s *Server) openAPI(c *echo.Context) error {
+type DocsHandler struct{}
+
+func NewDocsHandler() *DocsHandler {
+	return &DocsHandler{}
+}
+
+func (h *DocsHandler) RegisterRoutes(e *echo.Echo) {
+	e.GET("/openapi.yaml", h.openAPI)
+	e.GET("/docs", h.swagger)
+}
+
+func (h *DocsHandler) openAPI(c *echo.Context) error {
 	return c.Blob(http.StatusOK, "application/yaml", openAPISpec)
 }
 
-func (s *Server) swagger(c *echo.Context) error {
+func (h *DocsHandler) swagger(c *echo.Context) error {
 	return c.HTML(http.StatusOK, swaggerHTML)
 }

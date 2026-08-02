@@ -9,7 +9,7 @@ import (
 
 type createUsersTable struct{}
 
-func (m createUsersTable) Name() string { return "002_create_users_table" }
+func (m createUsersTable) Name() string { return "001_create_users_table" }
 
 func (m createUsersTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "users", func(t *surrealgoorm.Table) {

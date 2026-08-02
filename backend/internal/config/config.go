@@ -45,6 +45,25 @@ type SigningConfig struct {
 	DocumensoBaseURL string
 	DocumensoAPIKey  string
 }
+type CacheConfig struct {
+	URL string
+}
+type QueueConfig struct {
+	RedisURL    string
+	Concurrency int
+}
+type PaperlessConfig struct {
+	BaseURL string
+	Token   string
+}
+type JWTConfig struct {
+	Secret string
+}
+type SearchConfig struct {
+	URL    string
+	APIKey string
+	Index  string
+}
 type Config struct {
 	App             AppConfig
 	Database        DatabaseConfig
@@ -53,6 +72,11 @@ type Config struct {
 	LocalStorage    LocalStorageConfig
 	SharePoint      SharePointConfig
 	Signing         SigningConfig
+	Cache           CacheConfig
+	Queue           QueueConfig
+	Paperless       PaperlessConfig
+	JWT             JWTConfig
+	Search          SearchConfig
 }
 
 func Load(env string) Config {
@@ -94,6 +118,25 @@ func Load(env string) Config {
 			Provider:         getEnv("SIGNING_PROVIDER"),
 			DocumensoBaseURL: getEnv("DOCUMENSO_BASE_URL"),
 			DocumensoAPIKey:  getEnv("DOCUMENSO_API_KEY"),
+		},
+		Cache: CacheConfig{
+			URL: getEnv("VALKEY_URL"),
+		},
+		Queue: QueueConfig{
+			RedisURL:    getEnv("REDIS_URL"),
+			Concurrency: getEnvInt("QUEUE_CONCURRENCY", 10),
+		},
+		Paperless: PaperlessConfig{
+			BaseURL: getEnv("PAPERLESS_BASE_URL"),
+			Token:   getEnv("PAPERLESS_TOKEN"),
+		},
+		JWT: JWTConfig{
+			Secret: getEnv("JWT_SECRET"),
+		},
+		Search: SearchConfig{
+			URL:    getEnv("MEILI_URL"),
+			APIKey: getEnv("MEILI_MASTER_KEY"),
+			Index:  getEnvDefault("MEILI_INDEX", "documents"),
 		},
 	}
 }
@@ -137,6 +180,20 @@ func getEnvDefault(key string, fallback string) string {
 	}
 
 	return value
+}
+
+func getEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }
 
 func getEnvBool(key string, fallback bool) bool {

@@ -4,7 +4,6 @@ import "time"
 
 type Document struct {
 	ID              string         `json:"id,omitempty"`
-	TenantID        string         `json:"tenant_id"`
 	OwnerID         string         `json:"owner_id"`
 	Name            string         `json:"name"`
 	OriginalName    string         `json:"original_name"`

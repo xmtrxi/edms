@@ -9,12 +9,11 @@ import (
 
 type createDocumentsTable struct{}
 
-func (m createDocumentsTable) Name() string { return "004_create_documents_table" }
+func (m createDocumentsTable) Name() string { return "002_create_documents_table" }
 
 func (m createDocumentsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "documents", func(t *surrealgoorm.Table) {
 		t.ID()
-		t.String("tenant_id")
 		t.String("owner_id")
 		t.String("name")
 		t.String("original_name")

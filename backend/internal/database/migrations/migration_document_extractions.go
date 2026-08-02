@@ -8,7 +8,7 @@ import (
 
 type createDocumentExtractionsTable struct{}
 
-func (m createDocumentExtractionsTable) Name() string { return "008_create_document_extractions_table" }
+func (m createDocumentExtractionsTable) Name() string { return "006_create_document_extractions_table" }
 
 func (m createDocumentExtractionsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "document_extractions", func(t *surrealgoorm.Table) {
