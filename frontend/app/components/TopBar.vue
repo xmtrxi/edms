@@ -16,6 +16,7 @@
   import { useRouter } from "vue-router";
   import { toast } from "vue-sonner";
 
+  import UploadDialog from "@/components/documents/UploadDialog.vue";
   import { Avatar, AvatarFallback } from "@/components/ui/avatar";
   import { Badge } from "@/components/ui/badge";
   import { Button } from "@/components/ui/button";
@@ -31,11 +32,21 @@
   import { SidebarTrigger } from "@/components/ui/sidebar";
   import { useKeyboardShortcuts } from "@/composables/useKeyboardShortcuts";
   import { activityFeed } from "@/data/mock-data";
-  import { currentUser } from "@/lib/office-store";
 
   const router = useRouter();
 
-  const me = currentUser();
+  const auth = useAuthStore();
+  const me = computed(() => {
+    const name = auth.user?.name ?? "";
+    const initials = name
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase() ?? "")
+      .join("");
+    return { name, initials, email: auth.user?.email ?? "" };
+  });
+
   const uploadOpen = ref(false);
   const paletteOpen = ref(false);
   const notifications = ref([...activityFeed]);
@@ -54,22 +65,27 @@
     }
   });
 
-  function toggleTheme() {
+  const toggleTheme = () => {
     isDark.value = !isDark.value;
     document.documentElement.classList.toggle("dark", isDark.value);
     localStorage.setItem(THEME_KEY, isDark.value ? "dark" : "light");
-  }
+  };
 
-  function markAllRead() {
+  const markAllRead = () => {
     unread.value = 0;
     toast.success("All notifications marked as read");
-  }
+  };
 
-  function clearAll() {
+  const clearAll = () => {
     notifications.value = [];
     unread.value = 0;
     toast.success("Notifications cleared");
-  }
+  };
+
+  const logout = () => {
+    auth.logout();
+    router.push("/auth/login");
+  };
 
   useKeyboardShortcuts([
     {
@@ -218,7 +234,7 @@
         <DropdownMenuContent align="end" class="w-48">
           <DropdownMenuLabel class="font-normal">
             <div class="font-medium">{{ me.name }}</div>
-            <div class="text-muted-foreground text-xs font-normal">{{ me.role }}</div>
+            <div class="text-muted-foreground text-xs font-normal">{{ me.email }}</div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem @click="router.push('/settings')">
@@ -228,7 +244,7 @@
             <SettingsIcon class="mr-2 h-4 w-4" /> Settings
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem @click="router.push('/login')">
+          <DropdownMenuItem @click="logout">
             <LogOutIcon class="mr-2 h-4 w-4" /> Log out
           </DropdownMenuItem>
         </DropdownMenuContent>

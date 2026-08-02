@@ -110,7 +110,7 @@
   const chartW = 100;
   const chartH = 100;
 
-  function chartPaths(series: number[], idx: number) {
+  const chartPaths = (series: number[], idx: number) => {
     const pts = series
       .map(
         (v, i) =>
@@ -118,7 +118,7 @@
       )
       .join(" ");
     return { pts, idx, color: idx === 0 ? "var(--color-primary)" : "var(--color-info)" };
-  }
+  };
 
   const storagePct = computed(() => (m.storageUsedGB / m.storageTotalGB) * 100);
 

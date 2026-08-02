@@ -2,7 +2,6 @@
   import { ChevronRightIcon } from "@lucide/vue";
 
   import { SidebarProvider } from "@/components/ui/sidebar";
-  import { Toaster } from "@/components/ui/sonner";
 
   const route = useRoute();
   const pageMeta = computed(() => route.meta as Record<string, any>);
@@ -54,6 +53,5 @@
         </main>
       </div>
     </div>
-    <Toaster />
   </SidebarProvider>
 </template>
