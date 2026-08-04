@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	paperlessngxgo "github.com/xmtrxi/paperless-ngx.go"
 	"github.com/xmtrxi/edms/internal/config"
+	paperlessngxgo "github.com/xmtrxi/paperless-ngx.go"
 )
 
 type Client struct {

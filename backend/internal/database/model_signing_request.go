@@ -3,7 +3,7 @@ package database
 import "time"
 
 type SigningRequest struct {
-	ID                 string    `json:"id,omitempty"`
+	ID                 RecordID  `json:"id,omitempty"`
 	DocumentID         string    `json:"document_id"`
 	RequestedBy        string    `json:"requested_by"`
 	Provider           string    `json:"provider"`

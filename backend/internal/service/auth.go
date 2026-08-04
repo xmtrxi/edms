@@ -63,7 +63,11 @@ func (s *AuthService) ParseToken(tokenString string) (string, error) {
 }
 
 func (s *AuthService) UserByID(ctx context.Context, id string) (*database.User, error) {
-	return surrealdb.Select[database.User](ctx, s.DB, id)
+	rid, err := database.ParseRecordID(id)
+	if err != nil {
+		return nil, err
+	}
+	return surrealdb.Select[database.User](ctx, s.DB, rid)
 }
 
 type RegisterInput struct {

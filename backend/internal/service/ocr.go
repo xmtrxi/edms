@@ -8,8 +8,8 @@ import (
 	"time"
 
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
-	paperlessngxgo "github.com/xmtrxi/paperless-ngx.go"
 	"github.com/surrealdb/surrealdb.go"
+	paperlessngxgo "github.com/xmtrxi/paperless-ngx.go"
 
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/paperless"
@@ -34,7 +34,12 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 		return fmt.Errorf("paperless client is not configured")
 	}
 
-	doc, err := surrealdb.Select[database.Document](ctx, s.DB, documentID)
+	docID, err := database.ParseRecordID(documentID)
+	if err != nil {
+		return err
+	}
+
+	doc, err := surrealdb.Select[database.Document](ctx, s.DB, docID)
 	if err != nil {
 		return err
 	}
@@ -45,14 +50,16 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 	jobID := ""
 	job, err := surrealgoorm.Query[database.ProcessingJob](s.DB, "processing_jobs").WhereEq("document_id", documentID).First(ctx)
 	if err == nil && job != nil {
-		jobID = job.ID
-		_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, job.ID, map[string]any{
-			"status":     database.ProcessingJobStatusRunning,
-			"updated_at": time.Now().UTC(),
-		})
+		jobID = string(job.ID)
+		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
+			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
+				"status":     database.ProcessingJobStatusRunning,
+				"updated_at": time.Now().UTC(),
+			})
+		}
 	}
 
-	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, documentID, map[string]any{
+	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, docID, map[string]any{
 		"status":     database.DocumentStatusProcessing,
 		"updated_at": time.Now().UTC(),
 	})
@@ -71,10 +78,12 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 	}
 
 	if jobID != "" {
-		_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobID, map[string]any{
-			"external_id": taskID,
-			"updated_at":  time.Now().UTC(),
-		})
+		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
+			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
+				"external_id": taskID,
+				"updated_at":  time.Now().UTC(),
+			})
+		}
 	}
 
 	result, err := s.waitForTask(ctx, taskID)
@@ -143,13 +152,14 @@ func (s *OCRService) findProcessedDocument(ctx context.Context, doc *database.Do
 
 func (s *OCRService) completeDocument(ctx context.Context, doc *database.Document, jobID, taskID string, processed *paperlessngxgo.Document, archivePath string) {
 	now := time.Now().UTC()
+	docRID, _ := database.ParseRecordID(string(doc.ID))
 
-	if err := deleteDocumentExtractions(ctx, s.DB, doc.ID); err != nil {
+	if err := deleteDocumentExtractions(ctx, s.DB, string(doc.ID)); err != nil {
 		s.log.Warn("clear old extraction", "error", err, "document_id", doc.ID)
 	}
 
 	if _, err := surrealdb.Create[database.DocumentExtraction](ctx, s.DB, "document_extractions", &database.DocumentExtraction{
-		DocumentID: doc.ID,
+		DocumentID: string(doc.ID),
 		Text:       processed.Content,
 		Language:   "en",
 		Metadata: map[string]any{
@@ -163,24 +173,26 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 		s.log.Warn("create extraction", "error", err, "document_id", doc.ID)
 	}
 
-	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, doc.ID, map[string]any{
+	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, docRID, map[string]any{
 		"status":     database.DocumentStatusReady,
 		"metadata":   map[string]any{"extracted": true, "paperless_document_id": processed.ID},
 		"updated_at": now,
 	})
 
 	if jobID != "" {
-		_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobID, map[string]any{
-			"status":       database.ProcessingJobStatusCompleted,
-			"result":       map[string]any{"task_id": taskID, "paperless_document_id": processed.ID, "archive_path": archivePath},
-			"completed_at": now,
-			"updated_at":   now,
-		})
+		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
+			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
+				"status":       database.ProcessingJobStatusCompleted,
+				"result":       map[string]any{"task_id": taskID, "paperless_document_id": processed.ID, "archive_path": archivePath},
+				"completed_at": now,
+				"updated_at":   now,
+			})
+		}
 	}
 
 	if s.search != nil {
 		if err := s.search.IndexDocument(ctx, search.Document{
-			ID:           doc.ID,
+			ID:           string(doc.ID),
 			OwnerID:      doc.OwnerID,
 			Name:         doc.Name,
 			OriginalName: doc.OriginalName,
@@ -199,19 +211,22 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 
 func (s *OCRService) failDocument(ctx context.Context, doc *database.Document, jobID string, cause error) {
 	now := time.Now().UTC()
-	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, doc.ID, map[string]any{
+	docRID, _ := database.ParseRecordID(string(doc.ID))
+	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, docRID, map[string]any{
 		"status":     database.DocumentStatusFailed,
 		"updated_at": now,
 	})
 	if jobID != "" {
-		_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobID, map[string]any{
-			"status":     database.ProcessingJobStatusFailed,
-			"last_error": cause.Error(),
-			"updated_at": now,
-		})
+		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
+			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
+				"status":     database.ProcessingJobStatusFailed,
+				"last_error": cause.Error(),
+				"updated_at": now,
+			})
+		}
 	}
 	if s.search != nil {
-		if err := s.search.DeleteDocument(ctx, doc.ID); err != nil {
+		if err := s.search.DeleteDocument(ctx, string(doc.ID)); err != nil {
 			s.log.Warn("remove document from index", "error", err, "document_id", doc.ID)
 		}
 	}

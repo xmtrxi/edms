@@ -3,7 +3,7 @@ package database
 import "time"
 
 type DocumentVersion struct {
-	ID              string    `json:"id,omitempty"`
+	ID              RecordID  `json:"id,omitempty"`
 	DocumentID      string    `json:"document_id"`
 	Version         int       `json:"version"`
 	StorageProvider string    `json:"storage_provider"`

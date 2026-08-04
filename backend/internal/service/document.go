@@ -71,7 +71,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	storagePath := DocumentStoragePath(docID, in.Name)
 
 	doc := &database.Document{
-		ID:              docID,
+		ID:              database.RecordID(docID),
 		OwnerID:         in.OwnerID,
 		Name:            in.Name,
 		OriginalName:    in.Name,
@@ -101,7 +101,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 
 func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, storagePath string) {
 	job := &database.ProcessingJob{
-		DocumentID: doc.ID,
+		DocumentID: string(doc.ID),
 		Type:       "paperless_ocr",
 		Status:     database.ProcessingJobStatusQueued,
 		CreatedAt:  time.Now().UTC(),
@@ -115,7 +115,7 @@ func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, 
 		return
 	}
 	if err := s.queue.Enqueue(ctx, queue.TaskOCR, queue.OCRPayload{
-		DocumentID:  doc.ID,
+		DocumentID:  string(doc.ID),
 		StoragePath: storagePath,
 	}); err != nil {
 		s.log.Error("enqueue ocr task", "error", err, "document_id", doc.ID)
@@ -133,10 +133,12 @@ func (s *DocumentService) ReOCR(ctx context.Context, ownerID, id string) (*datab
 		s.log.Warn("clear old extraction", "error", err, "document_id", id)
 	}
 
-	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, id, map[string]any{
-		"status":     database.DocumentStatusUploaded,
-		"updated_at": time.Now().UTC(),
-	})
+	if rid, rerr := database.ParseRecordID(id); rerr == nil {
+		_, _ = surrealdb.Merge[database.Document](ctx, s.DB, rid, map[string]any{
+			"status":     database.DocumentStatusUploaded,
+			"updated_at": time.Now().UTC(),
+		})
+	}
 
 	s.stageOCR(ctx, doc, doc.StoragePath)
 	return doc, nil
@@ -148,7 +150,11 @@ func deleteDocumentExtractions(ctx context.Context, client *surrealdb.DB, docume
 }
 
 func (s *DocumentService) Get(ctx context.Context, ownerID, id string) (*database.Document, error) {
-	doc, err := surrealdb.Select[database.Document](ctx, s.DB, id)
+	rid, err := database.ParseRecordID(id)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := surrealdb.Select[database.Document](ctx, s.DB, rid)
 	if err != nil {
 		return nil, err
 	}
@@ -191,7 +197,11 @@ func (s *DocumentService) Delete(ctx context.Context, ownerID, id string) error 
 	if err != nil {
 		return err
 	}
-	if _, err := surrealdb.Merge[database.Document](ctx, s.DB, id, map[string]any{
+	rid, err := database.ParseRecordID(id)
+	if err != nil {
+		return err
+	}
+	if _, err := surrealdb.Merge[database.Document](ctx, s.DB, rid, map[string]any{
 		"status":     database.DocumentStatusArchived,
 		"updated_at": time.Now().UTC(),
 	}); err != nil {

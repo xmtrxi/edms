@@ -3,7 +3,7 @@ package database
 import "time"
 
 type AuditEvent struct {
-	ID         string         `json:"id,omitempty"`
+	ID         RecordID       `json:"id,omitempty"`
 	ActorID    string         `json:"actor_id"`
 	Action     string         `json:"action"`
 	Resource   string         `json:"resource"`

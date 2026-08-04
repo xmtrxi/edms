@@ -3,7 +3,7 @@ package database
 import "time"
 
 type DocumentExtraction struct {
-	ID         string         `json:"id,omitempty"`
+	ID         RecordID       `json:"id,omitempty"`
 	DocumentID string         `json:"document_id"`
 	Text       string         `json:"text"`
 	Language   string         `json:"language"`

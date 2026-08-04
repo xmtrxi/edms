@@ -50,7 +50,7 @@ func (h *DocumentsHandler) list(c *echo.Context) error {
 
 	result, err := h.search.Search(c.Request().Context(), service.SearchInput{
 		Query:    c.QueryParam("q"),
-		OwnerID:  user.ID,
+		OwnerID:  string(user.ID),
 		Status:   c.QueryParam("status"),
 		Page:     page,
 		PageSize: pageSize,
@@ -97,7 +97,7 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 	}
 
 	doc, err := h.docs.Upload(c.Request().Context(), service.UploadInput{
-		OwnerID:  user.ID,
+		OwnerID:  string(user.ID),
 		Name:     name,
 		MimeType: mime,
 		File:     src,
@@ -111,7 +111,7 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 
 func (h *DocumentsHandler) get(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	doc, extraction, err := h.docs.GetOCR(c.Request().Context(), user.ID, c.Param("id"))
+	doc, extraction, err := h.docs.GetOCR(c.Request().Context(), string(user.ID), c.Param("id"))
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -120,7 +120,7 @@ func (h *DocumentsHandler) get(c *echo.Context) error {
 
 func (h *DocumentsHandler) ocr(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	_, extraction, err := h.docs.GetOCR(c.Request().Context(), user.ID, c.Param("id"))
+	_, extraction, err := h.docs.GetOCR(c.Request().Context(), string(user.ID), c.Param("id"))
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -132,7 +132,7 @@ func (h *DocumentsHandler) ocr(c *echo.Context) error {
 
 func (h *DocumentsHandler) redoOCR(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	doc, err := h.docs.ReOCR(c.Request().Context(), user.ID, c.Param("id"))
+	doc, err := h.docs.ReOCR(c.Request().Context(), string(user.ID), c.Param("id"))
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -141,7 +141,7 @@ func (h *DocumentsHandler) redoOCR(c *echo.Context) error {
 
 func (h *DocumentsHandler) download(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	doc, reader, err := h.docs.Download(c.Request().Context(), user.ID, c.Param("id"))
+	doc, reader, err := h.docs.Download(c.Request().Context(), string(user.ID), c.Param("id"))
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -154,7 +154,7 @@ func (h *DocumentsHandler) download(c *echo.Context) error {
 
 func (h *DocumentsHandler) delete(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	if err := h.docs.Delete(c.Request().Context(), user.ID, c.Param("id")); err != nil {
+	if err := h.docs.Delete(c.Request().Context(), string(user.ID), c.Param("id")); err != nil {
 		return h.handleError(c, err)
 	}
 	return c.NoContent(http.StatusNoContent)

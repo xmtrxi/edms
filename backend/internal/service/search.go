@@ -93,7 +93,11 @@ func (s *SearchService) IndexDocument(ctx context.Context, documentID string) er
 		return nil
 	}
 
-	doc, err := surrealdb.Select[database.Document](ctx, s.client, documentID)
+	rid, err := database.ParseRecordID(documentID)
+	if err != nil {
+		return err
+	}
+	doc, err := surrealdb.Select[database.Document](ctx, s.client, rid)
 	if err != nil {
 		return err
 	}
@@ -110,7 +114,7 @@ func (s *SearchService) IndexDocument(ctx context.Context, documentID string) er
 	}
 
 	return s.search.IndexDocument(ctx, search.Document{
-		ID:           doc.ID,
+		ID:           string(doc.ID),
 		OwnerID:      doc.OwnerID,
 		Name:         doc.Name,
 		OriginalName: doc.OriginalName,
@@ -149,12 +153,12 @@ func (s *SearchService) ReindexAll(ctx context.Context) (int, error) {
 	indexed := 0
 	for _, doc := range docs {
 		if doc.Status == database.DocumentStatusArchived || doc.Status == database.DocumentStatusFailed {
-			if err := s.DeleteDocument(ctx, doc.ID); err != nil {
+			if err := s.DeleteDocument(ctx, string(doc.ID)); err != nil {
 				s.log.Warn("remove stale document from index", "error", err, "document_id", doc.ID)
 			}
 			continue
 		}
-		if err := s.IndexDocument(ctx, doc.ID); err != nil {
+		if err := s.IndexDocument(ctx, string(doc.ID)); err != nil {
 			s.log.Warn("index document", "error", err, "document_id", doc.ID)
 			continue
 		}
@@ -238,7 +242,7 @@ func (s *SearchService) documentsByIDs(ctx context.Context, ids []string) ([]dat
 	docs := (*results)[0].Result
 	byID := make(map[string]database.Document, len(docs))
 	for _, d := range docs {
-		byID[d.ID] = d
+		byID[string(d.ID)] = d
 	}
 
 	ordered := make([]database.Document, 0, len(ids))

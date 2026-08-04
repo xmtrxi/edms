@@ -26,7 +26,7 @@ func NewDocumentResponse(d *database.Document) DocumentResponse {
 		return DocumentResponse{}
 	}
 	return DocumentResponse{
-		ID:           d.ID,
+		ID:           string(d.ID),
 		Name:         d.Name,
 		OriginalName: d.OriginalName,
 		MimeType:     d.MimeType,

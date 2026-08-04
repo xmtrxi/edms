@@ -25,6 +25,11 @@ func Connect(ctx context.Context, cfg config.DatabaseConfig) (*DB, error) {
 		return nil, fmt.Errorf("connect to surrealdb: %w", err)
 	}
 
+	if err := client.Use(ctx, cfg.Namespace, cfg.Database); err != nil {
+		_ = client.Close(ctx)
+		return nil, fmt.Errorf("select surrealdb namespace/database: %w", err)
+	}
+
 	if cfg.User != "" || cfg.Password != "" {
 		if _, err := client.SignIn(ctx, surrealdb.Auth{
 			Username: cfg.User,
@@ -33,11 +38,6 @@ func Connect(ctx context.Context, cfg config.DatabaseConfig) (*DB, error) {
 			_ = client.Close(ctx)
 			return nil, fmt.Errorf("sign in to surrealdb: %w", err)
 		}
-	}
-
-	if err := client.Use(ctx, cfg.Namespace, cfg.Database); err != nil {
-		_ = client.Close(ctx)
-		return nil, fmt.Errorf("select surrealdb namespace/database: %w", err)
 	}
 
 	return &DB{client: client}, nil

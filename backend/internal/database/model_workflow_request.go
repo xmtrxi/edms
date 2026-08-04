@@ -3,7 +3,7 @@ package database
 import "time"
 
 type WorkflowRequest struct {
-	ID         string    `json:"id,omitempty"`
+	ID         RecordID  `json:"id,omitempty"`
 	DocumentID string    `json:"document_id"`
 	CreatedBy  string    `json:"created_by"`
 	Status     string    `json:"status"`

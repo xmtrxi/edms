@@ -3,7 +3,7 @@ package database
 import "time"
 
 type Document struct {
-	ID              string         `json:"id,omitempty"`
+	ID              RecordID       `json:"id,omitempty"`
 	OwnerID         string         `json:"owner_id"`
 	Name            string         `json:"name"`
 	OriginalName    string         `json:"original_name"`

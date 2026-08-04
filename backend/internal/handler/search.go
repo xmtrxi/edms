@@ -43,7 +43,7 @@ func (h *SearchHandler) search(c *echo.Context) error {
 	page, pageSize := parsePageParams(c)
 	result, err := h.service.Search(c.Request().Context(), service.SearchInput{
 		Query:    query,
-		OwnerID:  user.ID,
+		OwnerID:  string(user.ID),
 		Status:   c.QueryParam("status"),
 		Page:     page,
 		PageSize: pageSize,

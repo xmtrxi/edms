@@ -36,8 +36,7 @@ func main() {
 	defer db.Close(ctx)
 
 	if err := database.AutoMigrate(ctx, db, migrations.Migrations()); err != nil {
-		logger.Error("run migrations", "error", err)
-		os.Exit(1)
+		logger.Warn("run migrations failed, continuing", "error", err)
 	}
 
 	provider, err := storage.NewProvider(ctx, cfg)
@@ -103,7 +102,7 @@ func main() {
 		Paperless: paperlessClient,
 		Search:    searchClient,
 	})
-	if err := server.Start(); err != nil {
+	if err := server.Start(ctx); err != nil {
 		logger.Error("api server stopped", "error", err)
 		os.Exit(1)
 	}

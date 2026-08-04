@@ -3,7 +3,7 @@ package database
 import "time"
 
 type ProcessingJob struct {
-	ID          string         `json:"id,omitempty"`
+	ID          RecordID       `json:"id,omitempty"`
 	DocumentID  string         `json:"document_id"`
 	Type        string         `json:"type"`
 	Status      string         `json:"status"`
@@ -13,7 +13,7 @@ type ProcessingJob struct {
 	Result      map[string]any `json:"result"`
 	CreatedAt   time.Time      `json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
-	CompletedAt time.Time      `json:"completed_at,omitempty"`
+	CompletedAt *time.Time     `json:"completed_at,omitempty"`
 }
 
 const (

@@ -46,13 +46,13 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	handler.NewSearchHandler(deps).RegisterRoutes(api)
 }
 
-func (s *Server) Start() error {
+func (s *Server) Start(ctx context.Context) error {
 	start := echo.StartConfig{
 		Address:    ":" + s.config.App.Port,
 		HideBanner: true,
 	}
 
-	return start.Start(context.Background(), s.echo)
+	return start.Start(ctx, s.echo)
 }
 
 func (s *Server) Handler() http.Handler {

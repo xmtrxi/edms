@@ -20,7 +20,7 @@ func NewUserResponse(u *database.User) UserResponse {
 		return UserResponse{}
 	}
 	return UserResponse{
-		ID:        u.ID,
+		ID:        string(u.ID),
 		Email:     u.Email,
 		Name:      u.Name,
 		Status:    u.Status,
