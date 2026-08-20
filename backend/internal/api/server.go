@@ -7,15 +7,17 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/xmtrxi/edms/internal/config"
+	"github.com/xmtrxi/edms/internal/storage"
 )
 
 type Server struct {
 	echo      *echo.Echo
 	config    config.Config
+	storage   storage.Provider
 	documents *documentStore
 }
 
-func New(cfg config.Config) *Server {
+func New(cfg config.Config, store storage.Provider) *Server {
 	e := echo.New()
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
@@ -28,6 +30,7 @@ func New(cfg config.Config) *Server {
 	s := &Server{
 		echo:      e,
 		config:    cfg,
+		storage:   store,
 		documents: newDocumentStore(),
 	}
 	s.registerRoutes()
@@ -61,6 +64,7 @@ func (s *Server) registerRoutes() {
 	documents.POST("", s.uploadDocument)
 	documents.GET("/:id", s.getDocument)
 	documents.GET("/:id/download", s.downloadDocument)
+	documents.GET("/:id/url", s.getDocumentURL)
 	documents.DELETE("/:id", s.deleteDocument)
 	if s.config.Signing.Enabled {
 		documents.POST("/:id/sign", s.signDocument)
@@ -68,9 +72,14 @@ func (s *Server) registerRoutes() {
 }
 
 func (s *Server) health(c *echo.Context) error {
+	storageName := ""
+	if s.storage != nil {
+		storageName = s.storage.Name()
+	}
 	return c.JSON(http.StatusOK, map[string]any{
-		"status": "ok",
-		"env":    s.config.App.Env,
+		"status":           "ok",
+		"env":              s.config.App.Env,
+		"storage_provider": storageName,
 		"features": map[string]bool{
 			"signing": s.config.Signing.Enabled,
 		},

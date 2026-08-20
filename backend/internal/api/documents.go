@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -23,7 +25,7 @@ type documentStore struct {
 
 type storedDocument struct {
 	DocumentResponse
-	content []byte
+	storagePath string // key in S3 / MinIO
 }
 
 type DocumentResponse struct {
@@ -79,9 +81,11 @@ func (s *Server) uploadDocument(c *echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "could not read uploaded file"})
 	}
 	defer src.Close()
+
+	// Read file content so we can compute size and upload to S3.
 	content, err := io.ReadAll(src)
 	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not store uploaded file"})
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not read uploaded file"})
 	}
 
 	name := strings.TrimSpace(c.FormValue("name"))
@@ -97,13 +101,32 @@ func (s *Server) uploadDocument(c *echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not create document"})
 	}
+
+	// Build the S3 object key: documents/<doc_id>/<filename>
+	storagePath := fmt.Sprintf("documents/%s/%s", id, name)
+
+	// Upload to S3 / MinIO
+	if err := s.storage.Upload(c.Request().Context(), storagePath, bytes.NewReader(content)); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not store file: " + err.Error()})
+	}
+
 	now := time.Now().UTC()
-	document := storedDocument{DocumentResponse: DocumentResponse{
-		ID: id, Name: name, MimeType: file.Header.Get("Content-Type"), Size: int64(len(content)),
-		Status: "ready", CreatedAt: now, UpdatedAt: now,
-	}, content: content}
-	if document.MimeType == "" {
-		document.MimeType = "application/octet-stream"
+	mimeType := file.Header.Get("Content-Type")
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	document := storedDocument{
+		DocumentResponse: DocumentResponse{
+			ID:        id,
+			Name:      name,
+			MimeType:  mimeType,
+			Size:      int64(len(content)),
+			Status:    "ready",
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
+		storagePath: storagePath,
 	}
 
 	s.documents.mu.Lock()
@@ -125,19 +148,49 @@ func (s *Server) downloadDocument(c *echo.Context) error {
 	if !ok {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "document not found"})
 	}
+
+	// Stream the file directly from S3 / MinIO to the HTTP response.
+	reader, err := s.storage.Download(c.Request().Context(), document.storagePath)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not retrieve file: " + err.Error()})
+	}
+	defer reader.Close()
+
 	c.Response().Header().Set(echo.HeaderContentType, document.MimeType)
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=\""+strings.ReplaceAll(document.Name, "\"", "")+"\"")
-	return c.Blob(http.StatusOK, document.MimeType, document.content)
+	c.Response().WriteHeader(http.StatusOK)
+	_, err = io.Copy(c.Response(), reader)
+	return err
+}
+
+func (s *Server) getDocumentURL(c *echo.Context) error {
+	document, ok := s.documentByID(c.Param("id"))
+	if !ok {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "document not found"})
+	}
+
+	url, err := s.storage.GetUrl(c.Request().Context(), document.storagePath)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "could not generate download url: " + err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"url": url})
 }
 
 func (s *Server) deleteDocument(c *echo.Context) error {
 	id := c.Param("id")
 	s.documents.mu.Lock()
-	_, ok := s.documents.items[id]
+	document, ok := s.documents.items[id]
 	delete(s.documents.items, id)
 	s.documents.mu.Unlock()
 	if !ok {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "document not found"})
+	}
+
+	// Remove the file from S3 / MinIO.
+	if err := s.storage.Delete(c.Request().Context(), document.storagePath); err != nil {
+		// Log but don't fail the request — metadata is already removed.
+		// In production you'd log this for reconciliation.
+		_ = err
 	}
 	return c.NoContent(http.StatusNoContent)
 }

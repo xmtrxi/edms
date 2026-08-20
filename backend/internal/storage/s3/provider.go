@@ -5,11 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
+
+// presignExpiry is the duration a presigned download URL remains valid.
+const presignExpiry = 15 * time.Minute
 
 type S3Provider struct {
 	client  *s3.Client
@@ -28,6 +32,32 @@ func New(client *s3.Client, bucket string) *S3Provider {
 func (s S3Provider) Name() string {
 	return "s3"
 }
+
+// EnsureBucket creates the bucket if it does not already exist.
+// This is idempotent and safe to call on every startup.
+func (s S3Provider) EnsureBucket(ctx context.Context) error {
+	_, err := s.client.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err == nil {
+		return nil // bucket exists
+	}
+
+	var notFound *types.NotFound
+	if !errors.As(err, &notFound) {
+		// Some other error (permissions, network, etc.)
+		return fmt.Errorf("check bucket %q: %w", s.bucket, err)
+	}
+
+	_, err = s.client.CreateBucket(ctx, &s3.CreateBucketInput{
+		Bucket: aws.String(s.bucket),
+	})
+	if err != nil {
+		return fmt.Errorf("create bucket %q: %w", s.bucket, err)
+	}
+	return nil
+}
+
 func (s S3Provider) Upload(ctx context.Context, path string, file io.Reader) error {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
@@ -94,7 +124,7 @@ func (s S3Provider) GetUrl(ctx context.Context, path string) (string, error) {
 	result, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(path),
-	})
+	}, s3.WithPresignExpires(presignExpiry))
 	if err != nil {
 		return "", err
 	}

@@ -26,18 +26,7 @@ type S3Config struct {
 	SecretAccessKey string
 	Endpoint        string
 	Bucket          string
-}
-type LocalStorageConfig struct {
-	Path string
-}
-type SharePointConfig struct {
-	SiteURL      string
-	SiteID       string
-	TenantID     string
-	ClientID     string
-	ClientSecret string
-	DriveID      string
-	Folder       string
+	UsePathStyle    bool
 }
 type SigningConfig struct {
 	Enabled          bool
@@ -50,8 +39,6 @@ type Config struct {
 	Database        DatabaseConfig
 	StorageProvider string
 	S3              S3Config
-	LocalStorage    LocalStorageConfig
-	SharePoint      SharePointConfig
 	Signing         SigningConfig
 }
 
@@ -69,25 +56,14 @@ func Load(env string) Config {
 			User:      getEnv("SURREALDB_USER"),
 			Password:  getEnv("SURREALDB_PASS"),
 		},
-		StorageProvider: getEnv("STORAGE_PROVIDER"),
+		StorageProvider: getEnvDefault("STORAGE_PROVIDER", "s3"),
 		S3: S3Config{
-			Region:          getEnv("S3_REGION"),
+			Region:          getEnvDefault("S3_REGION", "us-east-1"),
 			AccessKeyID:     getEnv("S3_ACCESS_KEY_ID"),
 			SecretAccessKey: getEnv("S3_SECRET_ACCESS_KEY"),
 			Endpoint:        getEnv("S3_ENDPOINT"),
-			Bucket:          getEnv("S3_BUCKET"),
-		},
-		SharePoint: SharePointConfig{
-			SiteURL:      getEnv("SHAREPOINT_SITE_URL"),
-			SiteID:       getEnv("SHAREPOINT_SITE_ID"),
-			TenantID:     getEnv("SHAREPOINT_TENANT_ID"),
-			ClientID:     getEnv("SHAREPOINT_CLIENT_ID"),
-			ClientSecret: getEnv("SHAREPOINT_CLIENT_SECRET"),
-			DriveID:      getEnv("SHAREPOINT_DRIVE_ID"),
-			Folder:       getEnv("SHAREPOINT_FOLDER"),
-		},
-		LocalStorage: LocalStorageConfig{
-			Path: getEnv("LOCAL_STORAGE_PATH"),
+			Bucket:          getEnvDefault("S3_BUCKET", "edms-documents"),
+			UsePathStyle:    getEnvBool("S3_USE_PATH_STYLE", true),
 		},
 		Signing: SigningConfig{
 			Enabled:          getEnvBool("SIGNING_ENABLED", false),

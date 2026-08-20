@@ -39,12 +39,22 @@ edms/
 
 ## Setup
 
+### Storage (MinIO)
+
+The EDMS uses an S3-compatible object storage backend (MinIO). Run this via Docker before starting the backend:
+
+```bash
+docker compose -f docker-compose.minio.yml up -d
+```
+
+The MinIO console is accessible at `http://localhost:9001` (login: `minioadmin` / `minioadmin`).
+
 ### Backend
 
 ```bash
 cd backend
 go mod download
-go run ./cmd/server        # Start the server
+go run ./cmd/api           # Start the API server
 ```
 
 ### Frontend
