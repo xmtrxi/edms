@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -16,6 +17,7 @@ type SearchHandler struct {
 	service *service.SearchService
 	auth    *service.AuthService
 	queue   *queue.Client
+	log     *slog.Logger
 }
 
 func NewSearchHandler(deps Deps) *SearchHandler {
@@ -23,6 +25,7 @@ func NewSearchHandler(deps Deps) *SearchHandler {
 		service: service.NewSearchService(deps.Client(), deps.Search, deps.Logger),
 		auth:    service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
 		queue:   deps.Queue,
+		log:     deps.Logger,
 	}
 }
 
@@ -49,6 +52,7 @@ func (h *SearchHandler) search(c *echo.Context) error {
 		PageSize: pageSize,
 	})
 	if err != nil {
+		h.log.Error("search failed", "error", err, "query", query, "user_id", user.ID)
 		return respondError(c, http.StatusInternalServerError, "search failed")
 	}
 

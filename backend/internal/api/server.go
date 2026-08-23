@@ -42,7 +42,10 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	api := s.echo.Group("/api")
 	handler.NewHealthHandler(deps).RegisterRoutes(s.echo, api)
 	handler.NewAuthHandler(deps).RegisterRoutes(api)
+	handler.NewCategoriesHandler(deps).RegisterRoutes(api)
 	handler.NewDocumentsHandler(deps).RegisterRoutes(api)
+	handler.NewVersionsHandler(deps).RegisterRoutes(api)
+	handler.NewRoutingHandler(deps).RegisterRoutes(api)
 	handler.NewSearchHandler(deps).RegisterRoutes(api)
 }
 

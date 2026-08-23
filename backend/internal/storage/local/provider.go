@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 )
 
 type LocalProvider struct {
@@ -82,9 +84,13 @@ func (s *LocalProvider) GetUrl(ctx context.Context, path string) (string, error)
 }
 
 func (s *LocalProvider) List(ctx context.Context, prefix string, cursor *string, limit int) ([]string, *string, error) {
+	root := s.resolve(prefix)
 	var files []string
-	err := filepath.Walk(s.path, func(path string, info fs.FileInfo, err error) error {
+	err := filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if info.IsDir() {
@@ -100,5 +106,24 @@ func (s *LocalProvider) List(ctx context.Context, prefix string, cursor *string,
 	if err != nil {
 		return nil, nil, err
 	}
-	return files, nil, nil
+	sort.Strings(files)
+	start := 0
+	if cursor != nil && *cursor != "" {
+		if parsed, err := strconv.Atoi(*cursor); err == nil && parsed > 0 {
+			start = parsed
+		}
+	}
+	if start >= len(files) {
+		return []string{}, nil, nil
+	}
+	end := len(files)
+	if limit > 0 && start+limit < end {
+		end = start + limit
+	}
+	var next *string
+	if end < len(files) {
+		value := strconv.Itoa(end)
+		next = &value
+	}
+	return files[start:end], next, nil
 }

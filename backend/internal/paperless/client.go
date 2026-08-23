@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
 
 	"github.com/xmtrxi/edms/internal/config"
 	paperlessngxgo "github.com/xmtrxi/paperless-ngx.go"
@@ -12,6 +14,19 @@ import (
 
 type Client struct {
 	inner *paperlessngxgo.PaperlessNgx
+}
+
+var duplicateDocumentPattern = regexp.MustCompile(`(?i)duplicate[\s\S]*\(#(\d+)\)`)
+
+// DuplicateDocumentID extracts the existing Paperless document ID from a
+// duplicate-consumption failure, for example "It is a duplicate ... (#3).".
+func DuplicateDocumentID(result string) (int, bool) {
+	matches := duplicateDocumentPattern.FindStringSubmatch(result)
+	if len(matches) != 2 {
+		return 0, false
+	}
+	id, err := strconv.Atoi(matches[1])
+	return id, err == nil && id > 0
 }
 
 func New(cfg config.PaperlessConfig) *Client {

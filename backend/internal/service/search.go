@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
 	"github.com/surrealdb/surrealdb.go"
+	"github.com/surrealdb/surrealdb.go/pkg/models"
 
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/search"
@@ -24,11 +26,14 @@ func NewSearchService(client *surrealdb.DB, s *search.Client, logger *slog.Logge
 }
 
 type SearchInput struct {
-	Query    string
-	OwnerID  string
-	Status   string
-	Page     int
-	PageSize int
+	Query   string
+	OwnerID string
+	Status  string
+	// DocumentIDs, when set, restricts results to these ids (used for
+	// category filtering). An empty slice means "no restriction".
+	DocumentIDs []string
+	Page        int
+	PageSize    int
 }
 
 type SearchResult struct {
@@ -46,16 +51,22 @@ func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResu
 		in.Page = 1
 	}
 
-	if in.Query != "" && s.search != nil {
-		return s.searchMeili(ctx, in)
+	// Meilisearch has no view of category assignments, so fall back to the
+	// database whenever the results must be restricted to a set of ids.
+	if in.Query != "" && s.search != nil && len(in.DocumentIDs) == 0 {
+		result, err := s.searchMeili(ctx, in)
+		if err == nil {
+			return result, nil
+		}
+		s.log.Warn("meilisearch query failed; using database fallback", "error", err, "query", in.Query)
 	}
 
 	offset := (in.Page - 1) * in.PageSize
-	items, err := s.listDocuments(ctx, in.OwnerID, in.Query, in.Status, in.PageSize, offset)
+	items, err := s.listDocuments(ctx, in.OwnerID, in.Query, in.Status, in.DocumentIDs, in.PageSize, offset)
 	if err != nil {
 		return nil, err
 	}
-	total, err := s.countDocuments(ctx, in.OwnerID, in.Status)
+	total, err := s.countDocuments(ctx, in.OwnerID, in.Query, in.Status, in.DocumentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +125,7 @@ func (s *SearchService) IndexDocument(ctx context.Context, documentID string) er
 	}
 
 	return s.search.IndexDocument(ctx, search.Document{
-		ID:           string(doc.ID),
+		RecordID:     string(doc.ID),
 		OwnerID:      doc.OwnerID,
 		Name:         doc.Name,
 		OriginalName: doc.OriginalName,
@@ -178,21 +189,30 @@ func (s *SearchService) allDocuments(ctx context.Context) ([]database.Document, 
 	return (*results)[0].Result, nil
 }
 
-func (s *SearchService) listDocuments(ctx context.Context, ownerID, query, status string, limit, offset int) ([]database.Document, error) {
-	builder := surrealgoorm.Query[database.Document](s.client, "documents").WhereEq("owner_id", ownerID).OrderBy("created_at")
+func (s *SearchService) listDocuments(ctx context.Context, ownerID, query, status string, documentIDs []string, limit, offset int) ([]database.Document, error) {
+	sql := "SELECT * FROM documents WHERE owner_id = $owner"
+	vars := map[string]any{
+		"owner":  ownerID,
+		"limit":  limit,
+		"offset": offset,
+	}
 	if query != "" {
-		builder = builder.Where("name", "CONTAINS", query)
+		sql += " AND string::lowercase(name) CONTAINS $query"
+		vars["query"] = strings.ToLower(query)
 	}
 	if status != "" {
-		builder = builder.WhereEq("status", status)
+		sql += " AND status = $status"
+		vars["status"] = status
 	}
-	builder = builder.Limit(limit)
-
-	sql, vars := builder.ToBuildSQL()
-	if offset > 0 {
-		sql += " START $offset"
-		vars["offset"] = offset
+	if len(documentIDs) > 0 {
+		recordIDs, err := parseRecordIDs(documentIDs)
+		if err != nil {
+			return nil, err
+		}
+		sql += " AND id IN $documents"
+		vars["documents"] = recordIDs
 	}
+	sql += " ORDER BY created_at LIMIT $limit START $offset"
 
 	results, err := surrealdb.Query[[]database.Document](ctx, s.client, sql, vars)
 	if err != nil {
@@ -204,12 +224,24 @@ func (s *SearchService) listDocuments(ctx context.Context, ownerID, query, statu
 	return (*results)[0].Result, nil
 }
 
-func (s *SearchService) countDocuments(ctx context.Context, ownerID, status string) (int64, error) {
+func (s *SearchService) countDocuments(ctx context.Context, ownerID, query, status string, documentIDs []string) (int64, error) {
 	sql := "SELECT count() AS total FROM documents WHERE owner_id = $owner"
 	vars := map[string]any{"owner": ownerID}
+	if query != "" {
+		sql += " AND string::lowercase(name) CONTAINS $query"
+		vars["query"] = strings.ToLower(query)
+	}
 	if status != "" {
 		sql += " AND status = $status"
 		vars["status"] = status
+	}
+	if len(documentIDs) > 0 {
+		recordIDs, err := parseRecordIDs(documentIDs)
+		if err != nil {
+			return 0, err
+		}
+		sql += " AND id IN $documents"
+		vars["documents"] = recordIDs
 	}
 	sql += " GROUP ALL"
 
@@ -220,10 +252,29 @@ func (s *SearchService) countDocuments(ctx context.Context, ownerID, status stri
 	if results == nil || len(*results) == 0 || len((*results)[0].Result) == 0 {
 		return 0, nil
 	}
-	if total, ok := (*results)[0].Result[0]["total"].(float64); ok {
+	switch total := (*results)[0].Result[0]["total"].(type) {
+	case int64:
+		return total, nil
+	case uint64:
+		return int64(total), nil
+	case float64:
+		return int64(total), nil
+	case int:
 		return int64(total), nil
 	}
 	return 0, nil
+}
+
+func parseRecordIDs(ids []string) ([]models.RecordID, error) {
+	recordIDs := make([]models.RecordID, 0, len(ids))
+	for _, id := range ids {
+		rid, err := database.ParseRecordID(id)
+		if err != nil {
+			return nil, fmt.Errorf("parse document id %q: %w", id, err)
+		}
+		recordIDs = append(recordIDs, rid)
+	}
+	return recordIDs, nil
 }
 
 func (s *SearchService) documentsByIDs(ctx context.Context, ids []string) ([]database.Document, error) {
@@ -231,7 +282,12 @@ func (s *SearchService) documentsByIDs(ctx context.Context, ids []string) ([]dat
 		return []database.Document{}, nil
 	}
 
-	results, err := surrealdb.Query[[]database.Document](ctx, s.client, "SELECT * FROM documents WHERE id IN $ids", map[string]any{"ids": ids})
+	recordIDs, err := parseRecordIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+
+	results, err := surrealdb.Query[[]database.Document](ctx, s.client, "SELECT * FROM documents WHERE id IN $ids", map[string]any{"ids": recordIDs})
 	if err != nil {
 		return nil, err
 	}

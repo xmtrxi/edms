@@ -2,6 +2,8 @@ package search
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -32,7 +34,10 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 type Document struct {
+	// ID is a Meilisearch-safe primary key. RecordID retains the canonical
+	// SurrealDB id (for example, "documents:abc") used by the application.
 	ID           string    `json:"id"`
+	RecordID     string    `json:"record_id"`
 	OwnerID      string    `json:"owner_id"`
 	Name         string    `json:"name"`
 	OriginalName string    `json:"original_name"`
@@ -43,21 +48,81 @@ type Document struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+func documentID(recordID string) string {
+	sum := sha256.Sum256([]byte(recordID))
+	return hex.EncodeToString(sum[:])
+}
+
+// Configure creates the index when necessary and applies the attributes used
+// by authenticated searches as filters.
+func (c *Client) Configure(ctx context.Context) error {
+	if c == nil || c.inner == nil {
+		return fmt.Errorf("search is not configured")
+	}
+
+	if _, err := c.inner.GetIndexWithContext(ctx, c.index); err != nil {
+		task, createErr := c.inner.CreateIndexWithContext(ctx, &meilisearch.IndexConfig{
+			Uid:        c.index,
+			PrimaryKey: "id",
+		})
+		if createErr != nil {
+			return fmt.Errorf("create search index: %w", createErr)
+		}
+		if err := c.waitForTask(ctx, task.TaskUID); err != nil {
+			return fmt.Errorf("create search index: %w", err)
+		}
+	}
+
+	task, err := c.inner.Index(c.index).UpdateSettingsWithContext(ctx, &meilisearch.Settings{
+		FilterableAttributes: []string{"owner_id", "status"},
+		SearchableAttributes: []string{"name", "original_name", "content"},
+	})
+	if err != nil {
+		return fmt.Errorf("configure search index: %w", err)
+	}
+	if err := c.waitForTask(ctx, task.TaskUID); err != nil {
+		return fmt.Errorf("configure search index: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) IndexDocument(ctx context.Context, doc Document) error {
 	if c == nil || c.inner == nil {
 		return nil
 	}
+	doc.RecordID = strings.TrimSpace(doc.RecordID)
+	if doc.RecordID == "" {
+		return fmt.Errorf("document record id is required")
+	}
+	doc.ID = documentID(doc.RecordID)
 	pk := "id"
-	_, err := c.inner.Index(c.index).AddDocumentsWithContext(ctx, []Document{doc}, &meilisearch.DocumentOptions{PrimaryKey: &pk})
-	return err
+	task, err := c.inner.Index(c.index).AddDocumentsWithContext(ctx, []Document{doc}, &meilisearch.DocumentOptions{PrimaryKey: &pk})
+	if err != nil {
+		return err
+	}
+	return c.waitForTask(ctx, task.TaskUID)
 }
 
 func (c *Client) DeleteDocument(ctx context.Context, id string) error {
 	if c == nil || c.inner == nil {
 		return nil
 	}
-	_, err := c.inner.Index(c.index).DeleteDocumentWithContext(ctx, id, nil)
-	return err
+	task, err := c.inner.Index(c.index).DeleteDocumentWithContext(ctx, documentID(id), nil)
+	if err != nil {
+		return err
+	}
+	return c.waitForTask(ctx, task.TaskUID)
+}
+
+func (c *Client) waitForTask(ctx context.Context, taskUID int64) error {
+	task, err := c.inner.WaitForTaskWithContext(ctx, taskUID, 50*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	if task.Status != meilisearch.TaskStatusSucceeded {
+		return fmt.Errorf("meilisearch task %d ended with status %s", taskUID, task.Status)
+	}
+	return nil
 }
 
 type SearchInput struct {
@@ -113,7 +178,14 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 		if err := hit.DecodeInto(&doc); err != nil {
 			continue
 		}
-		ids = append(ids, doc.ID)
+		recordID := strings.TrimSpace(doc.RecordID)
+		// Backward compatibility for entries created before record_id existed.
+		if recordID == "" && strings.Contains(doc.ID, ":") {
+			recordID = doc.ID
+		}
+		if recordID != "" {
+			ids = append(ids, recordID)
+		}
 	}
 
 	return &SearchResult{

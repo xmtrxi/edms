@@ -40,10 +40,11 @@ type SharePointConfig struct {
 	Folder       string
 }
 type SigningConfig struct {
-	Enabled          bool
-	Provider         string
-	DocumensoBaseURL string
-	DocumensoAPIKey  string
+	Enabled                bool
+	Provider               string
+	DocumensoBaseURL       string
+	DocumensoAPIKey        string
+	DocumensoWebhookSecret string
 }
 type CacheConfig struct {
 	URL string
@@ -114,10 +115,11 @@ func Load(env string) Config {
 			Path: getEnv("LOCAL_STORAGE_PATH"),
 		},
 		Signing: SigningConfig{
-			Enabled:          getEnvBool("SIGNING_ENABLED", false),
-			Provider:         getEnv("SIGNING_PROVIDER"),
-			DocumensoBaseURL: getEnv("DOCUMENSO_BASE_URL"),
-			DocumensoAPIKey:  getEnv("DOCUMENSO_API_KEY"),
+			Enabled:                getEnvBool("SIGNING_ENABLED", false),
+			Provider:               getEnvDefault("SIGNING_PROVIDER", "documenso"),
+			DocumensoBaseURL:       getEnv("DOCUMENSO_BASE_URL"),
+			DocumensoAPIKey:        getEnv("DOCUMENSO_API_KEY"),
+			DocumensoWebhookSecret: getEnv("DOCUMENSO_WEBHOOK_SECRET"),
 		},
 		Cache: CacheConfig{
 			URL: getEnv("VALKEY_URL"),

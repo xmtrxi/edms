@@ -17,5 +17,9 @@ func Migrations() []surrealgoorm.Migration {
 		createAuditEventsTable{},
 		createWorkflowRequestsTable{},
 		createWorkflowActionsTable{},
+		createCategoriesTable{},
+		createDocumentCategoriesTable{},
+		expandVersioningAndRouting{},
+		expandSigningRouting{},
 	}
 }

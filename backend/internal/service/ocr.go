@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
@@ -71,30 +75,24 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 	}
 	defer file.Close()
 
-	taskID, err := s.paperless.UploadDocument(ctx, file, doc.OriginalName, doc.Name)
-	if err != nil {
-		s.failDocument(ctx, doc, jobID, fmt.Errorf("submit to paperless: %w", err))
-		return err
-	}
-
-	if jobID != "" {
-		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
-			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
-				"external_id": taskID,
-				"updated_at":  time.Now().UTC(),
-			})
+	var processed *paperlessngxgo.Document
+	taskID := ""
+	if paperlessID := metadataInt(doc.Metadata, "paperless_document_id"); paperlessID > 0 {
+		processed, err = s.paperless.GetDocument(ctx, paperlessID)
+		if err == nil {
+			s.log.Info("reusing linked paperless document", "document_id", doc.ID, "paperless_document_id", paperlessID)
 		}
 	}
-
-	result, err := s.waitForTask(ctx, taskID)
+	if processed == nil {
+		processed, taskID, err = s.submitAndWait(ctx, doc, file, jobID)
+	}
 	if err != nil {
 		s.failDocument(ctx, doc, jobID, err)
 		return err
 	}
-
-	processed, err := s.findProcessedDocument(ctx, doc, result)
-	if err != nil {
-		s.failDocument(ctx, doc, jobID, fmt.Errorf("fetch processed document: %w", err))
+	if processed == nil {
+		err = fmt.Errorf("paperless returned no processed document")
+		s.failDocument(ctx, doc, jobID, err)
 		return err
 	}
 
@@ -115,11 +113,55 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 	return nil
 }
 
-func (s *OCRService) waitForTask(ctx context.Context, taskID string) (*string, error) {
+func (s *OCRService) submitAndWait(ctx context.Context, doc *database.Document, file io.Reader, jobID string) (*paperlessngxgo.Document, string, error) {
+	taskID, err := s.paperless.UploadDocument(ctx, file, doc.OriginalName, doc.Name)
+	if err != nil {
+		return nil, "", fmt.Errorf("submit to paperless: %w", err)
+	}
+	if jobID != "" {
+		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
+			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
+				"external_id": taskID,
+				"updated_at":  time.Now().UTC(),
+			})
+		}
+	}
+	result, duplicateID, err := s.waitForTask(ctx, taskID)
+	if err != nil {
+		return nil, taskID, err
+	}
+	if duplicateID > 0 {
+		processed, fetchErr := s.paperless.GetDocument(ctx, duplicateID)
+		s.log.Info("reusing duplicate paperless document", "document_id", doc.ID, "paperless_document_id", duplicateID)
+		return processed, taskID, fetchErr
+	}
+	processed, err := s.findProcessedDocument(ctx, doc, result)
+	return processed, taskID, err
+}
+
+func metadataInt(metadata map[string]any, key string) int {
+	switch value := metadata[key].(type) {
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	case json.Number:
+		result, _ := value.Int64()
+		return int(result)
+	case string:
+		result, _ := strconv.Atoi(value)
+		return result
+	}
+	return 0
+}
+
+func (s *OCRService) waitForTask(ctx context.Context, taskID string) (result *string, duplicateID int, err error) {
 	for attempt := 0; attempt < 60; attempt++ {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		case <-time.After(2 * time.Second):
 		}
 
@@ -128,17 +170,20 @@ func (s *OCRService) waitForTask(ctx context.Context, taskID string) (*string, e
 			continue
 		}
 		if task.Status == paperlessngxgo.StatusSuccess {
-			return task.Result, nil
+			return task.Result, 0, nil
 		}
 		if task.Status == paperlessngxgo.StatusFailure {
 			result := ""
 			if task.Result != nil {
 				result = *task.Result
 			}
-			return nil, fmt.Errorf("paperless processing failed: %s", result)
+			if id, ok := paperless.DuplicateDocumentID(result); ok {
+				return task.Result, id, nil
+			}
+			return nil, 0, fmt.Errorf("paperless processing failed: %s", result)
 		}
 	}
-	return nil, fmt.Errorf("paperless processing timed out")
+	return nil, 0, fmt.Errorf("paperless processing timed out")
 }
 
 func (s *OCRService) findProcessedDocument(ctx context.Context, doc *database.Document, result *string) (*paperlessngxgo.Document, error) {
@@ -173,9 +218,17 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 		s.log.Warn("create extraction", "error", err, "document_id", doc.ID)
 	}
 
+	metadata := maps.Clone(doc.Metadata)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	metadata["extracted"] = true
+	metadata["paperless_document_id"] = processed.ID
+	metadata["paperless_title"] = processed.Title
+
 	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, docRID, map[string]any{
 		"status":     database.DocumentStatusReady,
-		"metadata":   map[string]any{"extracted": true, "paperless_document_id": processed.ID},
+		"metadata":   metadata,
 		"updated_at": now,
 	})
 
@@ -192,7 +245,7 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 
 	if s.search != nil {
 		if err := s.search.IndexDocument(ctx, search.Document{
-			ID:           string(doc.ID),
+			RecordID:     string(doc.ID),
 			OwnerID:      doc.OwnerID,
 			Name:         doc.Name,
 			OriginalName: doc.OriginalName,

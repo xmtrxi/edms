@@ -70,6 +70,26 @@ func TestSigningRouteIsOptIn(t *testing.T) {
 	}
 }
 
+func TestCategoryRoutesRequireAuth(t *testing.T) {
+	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/categories"},
+		{http.MethodPost, "/api/categories"},
+		{http.MethodPut, "/api/categories/categories:1"},
+		{http.MethodDelete, "/api/categories/categories:1"},
+	} {
+		req := httptest.NewRequest(test.method, test.path, nil)
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401, got %d", test.method, test.path, rec.Code)
+		}
+	}
+}
+
 func TestOpenAPIDocsAreServed(t *testing.T) {
 	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
 

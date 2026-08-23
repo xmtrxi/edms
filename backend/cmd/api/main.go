@@ -75,6 +75,13 @@ func main() {
 		searchClient = search.New(cfg.Search)
 	}
 
+	if searchClient != nil {
+		if err := searchClient.Configure(ctx); err != nil {
+			logger.Error("configure search", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	ocrSvc := service.NewOCRService(db.Client(), provider, paperlessClient, searchClient, logger)
 	searchSvc := service.NewSearchService(db.Client(), searchClient, logger)
 

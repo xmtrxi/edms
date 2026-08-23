@@ -3,12 +3,15 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
@@ -33,6 +36,7 @@ type DocumentService struct {
 	queue   *queue.Client
 	search  *search.Client
 	log     *slog.Logger
+	mu      sync.Mutex
 }
 
 func NewDocumentService(cfg config.Config, db *surrealdb.DB, provider storage.Provider, q *queue.Client, s *search.Client, logger *slog.Logger) *DocumentService {
@@ -63,9 +67,51 @@ type UploadInput struct {
 	Name     string
 	MimeType string
 	File     io.Reader
+	Metadata map[string]any
 }
 
-func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database.Document, error) {
+// Upload hashes to a temporary file first. This makes duplicate detection
+// deterministic without buffering large documents in memory.
+func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database.Document, bool, error) {
+	temp, err := os.CreateTemp("", "edms-upload-*")
+	if err != nil {
+		return nil, false, fmt.Errorf("create upload buffer: %w", err)
+	}
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(temp.Name())
+	}()
+
+	hash := sha256.New()
+	size, err := io.Copy(io.MultiWriter(temp, hash), in.File)
+	if err != nil {
+		return nil, false, fmt.Errorf("read upload: %w", err)
+	}
+	checksum := hex.EncodeToString(hash.Sum(nil))
+
+	// Serialize the checksum backfill, lookup, and row creation. This closes the
+	// race where two concurrent requests upload the same bytes before either row
+	// exists. Backfilling also protects documents created before checksums were
+	// introduced.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.backfillMissingChecksums(ctx, in.OwnerID); err != nil {
+		return nil, false, fmt.Errorf("backfill document checksums: %w", err)
+	}
+
+	existing, err := s.findByChecksum(ctx, in.OwnerID, checksum)
+	if err != nil {
+		return nil, false, fmt.Errorf("check duplicate: %w", err)
+	}
+	if existing != nil {
+		// The bytes already exist, so never create another row or upload them to
+		// Paperless. Re-OCR is an explicit action on the existing document.
+		return existing, true, nil
+	}
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return nil, false, fmt.Errorf("rewind upload: %w", err)
+	}
+
 	docID := newDocumentID()
 	now := time.Now().UTC()
 	storagePath := DocumentStoragePath(docID, in.Name)
@@ -76,27 +122,33 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 		Name:            in.Name,
 		OriginalName:    in.Name,
 		MimeType:        in.MimeType,
+		Size:            size,
 		StorageProvider: s.cfg.StorageProvider,
 		StoragePath:     storagePath,
+		Checksum:        checksum,
 		Status:          database.DocumentStatusUploaded,
-		Metadata:        map[string]any{},
+		Metadata:        generatedMetadata(in.Name, storagePath, checksum, in.Metadata),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 
-	if err := s.storage.Upload(ctx, storagePath, in.File); err != nil {
-		return nil, fmt.Errorf("store file: %w", err)
+	if err := s.storage.Upload(ctx, storagePath, temp); err != nil {
+		return nil, false, fmt.Errorf("store file: %w", err)
 	}
 
 	created, err := surrealdb.Create[database.Document](ctx, s.DB, "documents", doc)
 	if err != nil {
 		_ = s.storage.Delete(ctx, storagePath)
-		return nil, fmt.Errorf("create document record: %w", err)
+		return nil, false, fmt.Errorf("create document record: %w", err)
+	}
+	if _, err := createInitialVersion(ctx, s.DB, created, in.OwnerID, database.VersionSourceUpload); err != nil {
+		_ = s.storage.Delete(ctx, storagePath)
+		return nil, false, fmt.Errorf("create initial document version: %w", err)
 	}
 
 	s.stageOCR(ctx, created, storagePath)
 
-	return created, nil
+	return created, false, nil
 }
 
 func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, storagePath string) {
@@ -112,6 +164,7 @@ func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, 
 	}
 
 	if s.queue == nil {
+		s.log.Warn("ocr queue is not configured", "document_id", doc.ID)
 		return
 	}
 	if err := s.queue.Enqueue(ctx, queue.TaskOCR, queue.OCRPayload{

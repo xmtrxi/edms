@@ -24,6 +24,10 @@ func TestMigrationsAreRegisteredInOrder(t *testing.T) {
 		"011_create_audit_events_table",
 		"012_create_workflow_requests_table",
 		"013_create_workflow_actions_table",
+		"014_create_categories_table",
+		"015_create_document_categories_table",
+		"016_expand_versioning_and_routing",
+		"017_expand_signing_routing",
 	}
 	if len(migrations) != len(expected) {
 		t.Fatalf("expected %d migrations, got %d", len(expected), len(migrations))

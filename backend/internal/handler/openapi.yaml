@@ -72,6 +72,11 @@ paths:
           name: status
           schema:
             type: string
+        - in: query
+          name: category_id
+          description: Restrict results to a category and its subcategories
+          schema:
+            type: string
       responses:
         "200":
           description: Documents
@@ -101,6 +106,12 @@ paths:
                   format: binary
                 name:
                   type: string
+                category_id:
+                  description: Optional category to assign the document to
+                  type: string
+                metadata:
+                  description: JSON object encoded as a string
+                  type: string
       responses:
         "201":
           description: Created document
@@ -108,6 +119,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Document"
+  /documents/sync:
+    post:
+      tags: [Documents]
+      summary: Reconcile files from the configured storage provider
+      description: Set dry_run=true to scan and download files for comparison without creating document records, queuing OCR, or indexing.
+      parameters:
+        - in: query
+          name: dry_run
+          schema:
+            type: boolean
+            default: false
+        - in: query
+          name: workers
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 16
+            default: 4
+      responses:
+        "200":
+          description: Dry run completed without side effects
+        "202":
+          description: Sync completed and imported documents were queued for OCR
+        "400":
+          description: Invalid query parameter
   /documents/{id}:
     get:
       tags: [Documents]
@@ -129,6 +165,31 @@ paths:
       responses:
         "204":
           description: Deleted
+  /documents/{id}/category:
+    put:
+      tags: [Documents]
+      summary: Set or clear a document's category
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  description: Category to assign; send an empty string to clear it
+                  type: string
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Document"
+        "404":
+          description: Document or category not found
   /documents/{id}/download:
     get:
       tags: [Documents]
@@ -138,6 +199,71 @@ paths:
       responses:
         "200":
           description: File stream
+  /categories:
+    get:
+      tags: [Categories]
+      summary: List categories with their document counts
+      responses:
+        "200":
+          description: Categories
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Category"
+    post:
+      tags: [Categories]
+      summary: Create a category or subcategory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryInput"
+      responses:
+        "201":
+          description: Created category
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "400":
+          description: Invalid name or parent category
+  /categories/{id}:
+    put:
+      tags: [Categories]
+      summary: Update a category
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CategoryInput"
+      responses:
+        "200":
+          description: Updated category
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Category"
+        "404":
+          description: Category not found
+    delete:
+      tags: [Categories]
+      summary: Delete an empty category
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "204":
+          description: Deleted
+        "409":
+          description: Category still has subcategories or documents
   /documents/{id}/sign:
     post:
       tags: [Signing]
@@ -216,6 +342,42 @@ components:
           type: string
         status:
           type: string
+    Category:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        parent_id:
+          description: Empty for top-level categories
+          type: string
+        color:
+          type: string
+        document_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CategoryInput:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parent_id:
+          description: Assign to a top-level category to create a subcategory
+          type: string
+        color:
+          type: string
     Document:
       type: object
       properties:
@@ -232,3 +394,5 @@ components:
           format: int64
         status:
           type: string
+        category:
+          $ref: "#/components/schemas/Category"
