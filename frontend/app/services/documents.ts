@@ -1,4 +1,17 @@
-import type { ApiMeta, ApiResponse, Document, ListDocumentsParams, OCRResponse } from "@/types/api";
+import type {
+  ApiMeta,
+  ApiResponse,
+  CreateDocumentRoute,
+  Document,
+  DocumentContributors,
+  DocumentHistoryEvent,
+  DocumentRoute,
+  DocumentVersion,
+  ListDocumentsParams,
+  OCRResponse,
+  RouteDecision,
+  StorageSyncResult,
+} from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
 
 export const documentsService = () => {
@@ -30,6 +43,124 @@ export const documentsService = () => {
     const { $api } = useNuxtApp();
     try {
       const res = await $api<ApiResponse<Document>>(`/documents/${id}`);
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  const fetchVersions = async (id: string): Promise<DocumentVersion[]> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentVersion[]>>(`/documents/${id}/versions`);
+      error.value = "";
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return [];
+    }
+  };
+
+  const fetchContributors = async (id: string): Promise<DocumentContributors | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentContributors>>(`/documents/${id}/contributors`);
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  const fetchHistory = async (id: string): Promise<DocumentHistoryEvent[]> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentHistoryEvent[]>>(`/documents/${id}/history`);
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return [];
+    }
+  };
+
+  const downloadVersion = async (documentId: string, version: DocumentVersion): Promise<void> => {
+    const { $api } = useNuxtApp();
+    try {
+      const blob = await $api<Blob>(`/documents/${documentId}/versions/${version.id}/download`, {
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = version.file_name;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+    }
+  };
+
+  const restoreVersion = async (
+    documentId: string,
+    versionId: string,
+    changeSummary = "",
+  ): Promise<DocumentVersion | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentVersion>>(
+        `/documents/${documentId}/versions/${versionId}/restore`,
+        {
+          method: "POST",
+          body: { change_summary: changeSummary },
+        },
+      );
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  const fetchRoutes = async (id: string): Promise<DocumentRoute[]> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentRoute[]>>(`/documents/${id}/routes`);
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return [];
+    }
+  };
+
+  const createRoute = async (
+    documentId: string,
+    input: CreateDocumentRoute,
+  ): Promise<DocumentRoute | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentRoute>>(`/documents/${documentId}/routes`, {
+        method: "POST",
+        body: input,
+      });
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  const decideRoute = async (
+    documentId: string,
+    routeId: string,
+    input: RouteDecision,
+  ): Promise<DocumentRoute | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentRoute>>(
+        `/documents/${documentId}/routes/${routeId}/decisions`,
+        { method: "POST", body: input },
+      );
       return res.data;
     } catch (err) {
       error.value = apiErrorMessage(err);
@@ -84,16 +215,56 @@ export const documentsService = () => {
     }
   };
 
-  const upload = async (file: File, name?: string): Promise<Document | null> => {
+  const upload = async (
+    file: File,
+    name?: string,
+    categoryId?: string,
+  ): Promise<Document | null> => {
     const { $api } = useNuxtApp();
     const formData = new FormData();
     formData.append("file", file);
     if (name) formData.append("name", name);
+    if (categoryId) formData.append("category_id", categoryId);
     try {
       const res = await $api<ApiResponse<Document>>("/documents", {
         method: "POST",
         body: formData,
       });
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  const syncStorage = async (
+    options: { workers?: number; dryRun?: boolean } = {},
+  ): Promise<StorageSyncResult | null> => {
+    const { $api } = useNuxtApp();
+    const { workers = 4, dryRun = false } = options;
+    try {
+      const res = await $api<ApiResponse<StorageSyncResult>>("/documents/sync", {
+        method: "POST",
+        query: { workers, dry_run: dryRun },
+      });
+      error.value = "";
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  // Passing an empty categoryId clears the document's category.
+  const setCategory = async (id: string, categoryId: string): Promise<Document | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<Document>>(`/documents/${id}/category`, {
+        method: "PUT",
+        body: { category_id: categoryId },
+      });
+      documents.value = documents.value.map((doc) => (doc.id === id ? res.data : doc));
+      error.value = "";
       return res.data;
     } catch (err) {
       error.value = apiErrorMessage(err);
@@ -108,10 +279,20 @@ export const documentsService = () => {
     error,
     fetchDocuments,
     fetchDocument,
+    fetchVersions,
+    fetchContributors,
+    fetchHistory,
+    downloadVersion,
+    restoreVersion,
+    fetchRoutes,
+    createRoute,
+    decideRoute,
     fetchOCR,
     redoOCR,
     download,
     archive,
     upload,
+    syncStorage,
+    setCategory,
   };
 };

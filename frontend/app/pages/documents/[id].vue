@@ -13,6 +13,8 @@
   import { useRoute, useRouter } from "vue-router";
   import { toast } from "vue-sonner";
 
+  import DocumentRoutingPanel from "@/components/documents/DocumentRoutingPanel.vue";
+  import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
   import {
@@ -30,7 +32,14 @@
   import { Badge } from "@/components/ui/badge";
   import { Button } from "@/components/ui/button";
   import { Separator } from "@/components/ui/separator";
-  import type { Document } from "@/types/api";
+  import type {
+    CreateDocumentRoute,
+    Document,
+    DocumentContributors,
+    DocumentRoute,
+    DocumentVersion,
+    RouteDecision,
+  } from "@/types/api";
   import { formatBytes, formatDateTime, fileTypeFromMime, initialsOf } from "@/utils/format";
 
   definePageMeta({
@@ -48,15 +57,30 @@
   const service = documentsService();
   const docId = computed(() => route.params.id as string);
   const doc = ref<Document | null>(null);
+  const versions = ref<DocumentVersion[]>([]);
+  const contributors = ref<DocumentContributors | null>(null);
+  const documentRoutes = ref<DocumentRoute[]>([]);
   const loading = ref(true);
   const error = ref("");
   const archiving = ref(false);
   const redoingOcr = ref(false);
+  const versionBusy = ref(false);
+  const routeBusy = ref(false);
 
   const load = async () => {
     loading.value = true;
     error.value = "";
     doc.value = await service.fetchDocument(docId.value);
+    if (doc.value) {
+      const [loadedVersions, loadedContributors, loadedRoutes] = await Promise.all([
+        service.fetchVersions(docId.value),
+        service.fetchContributors(docId.value),
+        service.fetchRoutes(docId.value),
+      ]);
+      versions.value = loadedVersions;
+      contributors.value = loadedContributors;
+      documentRoutes.value = loadedRoutes;
+    }
     loading.value = false;
     if (!doc.value) error.value = service.error;
   };
@@ -81,6 +105,45 @@
     } else {
       toast.error(service.error || "Could not re-run OCR");
     }
+  };
+
+  const handleRestoreVersion = async (version: DocumentVersion) => {
+    if (!doc.value) return;
+    versionBusy.value = true;
+    const restored = await service.restoreVersion(
+      doc.value.id,
+      version.id,
+      `Restored version ${version.version}`,
+    );
+    versionBusy.value = false;
+    if (restored) {
+      toast.success(`Version ${version.version} restored as a new version`);
+      await load();
+    } else toast.error(service.error || "Could not restore version");
+  };
+
+  const handleCreateRoute = async (input: CreateDocumentRoute) => {
+    if (!doc.value) return;
+    routeBusy.value = true;
+    const created = await service.createRoute(doc.value.id, input);
+    routeBusy.value = false;
+    if (created) {
+      toast.success("Document route started");
+      documentRoutes.value = [created, ...documentRoutes.value];
+    } else toast.error(service.error || "Could not start route");
+  };
+
+  const handleRouteDecision = async (routeId: string, input: RouteDecision) => {
+    if (!doc.value) return;
+    routeBusy.value = true;
+    const updated = await service.decideRoute(doc.value.id, routeId, input);
+    routeBusy.value = false;
+    if (updated) {
+      toast.success("Routing decision recorded");
+      documentRoutes.value = documentRoutes.value.map((route) =>
+        route.id === updated.id ? updated : route,
+      );
+    } else toast.error(service.error || "Could not record routing decision");
   };
 
   const handleArchive = async () => {
@@ -230,6 +293,22 @@
           </div>
         </div>
 
+        <DocumentVersionHistory
+          :versions="versions"
+          :contributors="contributors"
+          :current-version-id="doc.current_version_id"
+          :busy="versionBusy"
+          @download="service.downloadVersion(doc.id, $event)"
+          @restore="handleRestoreVersion"
+        />
+
+        <DocumentRoutingPanel
+          :routes="documentRoutes"
+          :busy="routeBusy"
+          @create="handleCreateRoute"
+          @decide="handleRouteDecision"
+        />
+
         <div class="border-border bg-card rounded-xl border p-5">
           <div class="mb-3 flex items-center gap-2">
             <HistoryIcon class="text-primary h-4 w-4" />
@@ -259,6 +338,14 @@
             <div>
               <dt class="text-muted-foreground">Updated</dt>
               <dd class="mt-1 font-medium">{{ formatDateTime(doc.updated_at) }}</dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground">Versions</dt>
+              <dd class="mt-1 font-medium">{{ doc.version_count }}</dd>
+            </div>
+            <div>
+              <dt class="text-muted-foreground">Editors</dt>
+              <dd class="mt-1 font-medium">{{ contributors?.unique_editor_count ?? 0 }}</dd>
             </div>
           </dl>
         </div>

@@ -23,7 +23,17 @@
     DialogHeader,
     DialogTitle,
   } from "@/components/ui/dialog";
+  import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
   import { Progress } from "@/components/ui/progress";
+  import {
+    Select,
+    SelectContent,
+    SelectGroup,
+    SelectItem,
+    SelectLabel,
+    SelectTrigger,
+    SelectValue,
+  } from "@/components/ui/select";
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
   import { cn } from "@/lib/utils";
   import { formatBytes } from "@/utils/format";
@@ -36,15 +46,36 @@
     file: File;
     progress: number;
     stage: "uploading" | "done" | "failed";
+    categoryId?: string;
+    categoryName?: string;
     error?: string;
   }
 
   const service = documentsService();
+  const categoryService = categoriesService();
+  const { categories } = categoryService;
   const queue = ref<QueueItem[]>([]);
   const dragOver = ref(false);
   const tab = ref<"upload" | "progress">("upload");
   const input = ref<HTMLInputElement | null>(null);
   const uploading = ref(false);
+  const selectedCategoryId = shallowRef("none");
+
+  const parentCategories = computed(() =>
+    categories.value.filter((category) => !category.parent_id),
+  );
+  const subcategories = computed(() => categories.value.filter((category) => !!category.parent_id));
+  const selectedCategory = computed(() =>
+    categories.value.find((category) => category.id === selectedCategoryId.value),
+  );
+
+  watch(
+    () => props.open,
+    (open) => {
+      if (open && !categoryService.loaded.value) void categoryService.fetchCategories();
+    },
+    { immediate: true },
+  );
 
   const addFiles = (files: FileList | File[]) => {
     const items: QueueItem[] = Array.from(files).map((file) => ({
@@ -52,6 +83,8 @@
       file,
       progress: 0,
       stage: "uploading",
+      categoryId: selectedCategory.value?.id,
+      categoryName: selectedCategory.value?.name,
     }));
     queue.value = [...queue.value, ...items];
     tab.value = "progress";
@@ -71,12 +104,12 @@
       const pending = queue.value.filter((q) => q.stage === "uploading");
       for (const item of pending) {
         item.progress = 15;
-        const doc = await service.upload(item.file, item.file.name);
+        const doc = await service.upload(item.file, item.file.name, item.categoryId);
         if (doc) {
           item.progress = 100;
           item.stage = "done";
           emit("uploaded", doc.id);
-          toast.success(`Uploaded ${doc.name}`);
+          toast.success(`Processed ${doc.name}`);
         } else {
           item.stage = "failed";
           item.error = service.error;
@@ -159,6 +192,44 @@
             </p>
           </div>
 
+          <Field>
+            <FieldLabel>Category</FieldLabel>
+            <Select v-model="selectedCategoryId">
+              <SelectTrigger class="w-full">
+                <SelectValue placeholder="Select a category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="none">Uncategorized</SelectItem>
+                </SelectGroup>
+                <SelectGroup v-if="parentCategories.length">
+                  <SelectLabel>Categories</SelectLabel>
+                  <SelectItem
+                    v-for="category in parentCategories"
+                    :key="category.id"
+                    :value="category.id"
+                  >
+                    {{ category.name }}
+                  </SelectItem>
+                </SelectGroup>
+                <SelectGroup v-if="subcategories.length">
+                  <SelectLabel>Subcategories</SelectLabel>
+                  <SelectItem
+                    v-for="category in subcategories"
+                    :key="category.id"
+                    :value="category.id"
+                  >
+                    {{ parentCategories.find((parent) => parent.id === category.parent_id)?.name }}
+                    / {{ category.name }}
+                  </SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              Every file added in this batch will be assigned to this category.
+            </FieldDescription>
+          </Field>
+
           <div class="grid grid-cols-2 gap-2">
             <div
               v-for="fmt in [
@@ -206,6 +277,9 @@
                       formatBytes(q.file.size)
                     }}</span>
                   </div>
+                  <p class="text-muted-foreground mt-0.5 text-[10px]">
+                    {{ q.categoryName ? `Category: ${q.categoryName}` : "Uncategorized" }}
+                  </p>
                   <div class="mt-2 flex items-center gap-2">
                     <Progress :model-value="q.progress" class="h-1.5 flex-1" />
                     <Badge
@@ -233,7 +307,7 @@
                       />
                       {{
                         q.stage === "done"
-                          ? "Uploaded"
+                          ? "Processed"
                           : q.stage === "failed"
                             ? "Failed"
                             : "Uploading"

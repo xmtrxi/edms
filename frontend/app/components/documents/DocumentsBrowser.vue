@@ -46,11 +46,20 @@
   const service = documentsService();
   const { documents, meta, loading, error } = service;
 
+  const categoryService = categoriesService();
+  const { categories } = categoryService;
+  void categoryService.fetchCategories();
+
   const PAGE_SIZE = 10;
   const view = ref<"list" | "grid">("list");
   const query = ref("");
   const status = ref(props.initialStatus);
+  const categoryId = ref("");
   const page = ref(1);
+
+  const selectedCategory = computed(() =>
+    categories.value.find((category) => category.id === categoryId.value),
+  );
 
   const totalPages = computed(() => Math.max(1, Math.ceil((meta.value?.total ?? 0) / PAGE_SIZE)));
 
@@ -58,6 +67,7 @@
     service.fetchDocuments({
       q: query.value.trim() || undefined,
       status: status.value || undefined,
+      category_id: categoryId.value || undefined,
       page: page.value,
       page_size: PAGE_SIZE,
     });
@@ -73,7 +83,7 @@
     onCleanup(() => clearTimeout(t));
   });
 
-  watch([status, page], () => {
+  watch([status, categoryId, page], () => {
     load();
   });
 
@@ -84,10 +94,13 @@
   const clearFilters = () => {
     query.value = "";
     status.value = "";
+    categoryId.value = "";
     page.value = 1;
   };
 
-  const hasActiveFilters = computed(() => !!query.value.trim() || !!status.value);
+  const hasActiveFilters = computed(
+    () => !!query.value.trim() || !!status.value || !!categoryId.value,
+  );
 
   const statusOptions = ["uploaded", "processing", "ready", "failed", "archived"] as const;
 
@@ -150,6 +163,40 @@
         </DropdownMenuContent>
       </DropdownMenu>
 
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <Button variant="outline" size="sm" class="h-9 gap-1.5">
+            {{ selectedCategory?.name ?? "All categories" }}
+            <ChevronDownIcon class="h-3 w-3 opacity-60" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" :side="'bottom'" :avoidCollisions="true">
+          <DropdownMenuLabel>Filter by category</DropdownMenuLabel>
+          <DropdownMenuItem
+            :class="cn(!categoryId && 'bg-secondary/60')"
+            @click="
+              categoryId = '';
+              page = 1;
+            "
+            >All categories</DropdownMenuItem
+          >
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            v-for="category in categories"
+            :key="category.id"
+            :class="cn(categoryId === category.id && 'bg-secondary/60')"
+            @click="
+              categoryId = category.id;
+              page = 1;
+            "
+          >
+            <span :class="cn(category.parent_id && 'text-muted-foreground pl-3')">{{
+              category.name
+            }}</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <div class="border-border bg-card ml-auto flex items-center gap-1 rounded-lg border p-0.5">
         <Button
           :variant="view === 'list' ? 'secondary' : 'ghost'"
@@ -179,6 +226,13 @@
       >
       <Badge v-if="status" variant="secondary" class="bg-primary/10 text-primary gap-1 border-0">
         {{ getStatusMeta(status).label }}
+      </Badge>
+      <Badge
+        v-if="selectedCategory"
+        variant="secondary"
+        class="bg-primary/10 text-primary gap-1 border-0"
+      >
+        {{ selectedCategory.name }}
       </Badge>
       <button
         v-if="hasActiveFilters"
@@ -231,6 +285,9 @@
           <div class="mt-3 min-w-0">
             <p class="text-foreground truncate text-sm font-medium">{{ d.name }}</p>
             <p class="text-muted-foreground mt-0.5 truncate text-xs">{{ d.original_name }}</p>
+            <Badge v-if="d.category" variant="secondary" class="mt-2 border-0 text-[10px]">
+              {{ d.category.name }}
+            </Badge>
           </div>
           <div class="text-muted-foreground mt-3 flex items-center justify-between text-[11px]">
             <span>{{ formatBytes(d.size) }}</span>
@@ -245,6 +302,7 @@
             <thead class="bg-secondary/50 text-muted-foreground text-xs">
               <tr>
                 <th class="px-4 py-2.5 text-left font-medium">Name</th>
+                <th class="hidden px-3 py-2.5 text-left font-medium lg:table-cell">Category</th>
                 <th class="hidden px-3 py-2.5 text-left font-medium md:table-cell">Owner</th>
                 <th class="hidden px-3 py-2.5 text-left font-medium md:table-cell">Status</th>
                 <th class="hidden px-3 py-2.5 text-right font-medium sm:table-cell">Size</th>
@@ -271,6 +329,12 @@
                       </div>
                     </div>
                   </button>
+                </td>
+                <td class="hidden px-3 py-2 lg:table-cell">
+                  <Badge v-if="d.category" variant="secondary" class="border-0 text-[10px]">
+                    {{ d.category.name }}
+                  </Badge>
+                  <span v-else class="text-muted-foreground text-xs">—</span>
                 </td>
                 <td class="hidden px-3 py-2 md:table-cell">
                   <div class="flex items-center gap-2">
