@@ -11,21 +11,19 @@ import (
 	"github.com/xmtrxi/edms/internal/cache"
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
-	"github.com/xmtrxi/edms/internal/paperless"
 	"github.com/xmtrxi/edms/internal/queue"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/storage"
 )
 
 type Deps struct {
-	Cfg       config.Config
-	Logger    *slog.Logger
-	DB        *database.DB
-	Cache     *cache.Cache
-	Storage   storage.Provider
-	Queue     *queue.Client
-	Paperless *paperless.Client
-	Search    *search.Client
+	Cfg     config.Config
+	Logger  *slog.Logger
+	DB      *database.DB
+	Cache   *cache.Cache
+	Storage storage.Provider
+	Queue   *queue.Client
+	Search  *search.Client
 }
 
 func (d Deps) Client() *surrealdb.DB {

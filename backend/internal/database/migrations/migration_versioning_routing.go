@@ -4,7 +4,6 @@ import (
 	"context"
 
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
-	"github.com/surrealdb/surrealdb.go"
 )
 
 type expandVersioningAndRouting struct{}
@@ -38,7 +37,7 @@ func (m expandVersioningAndRouting) Up(ctx context.Context, schema surrealgoorm.
 		"DEFINE FIELD return_to_step ON workflow_actions TYPE option<int>;",
 	}
 	for _, statement := range statements {
-		if _, err := surrealdb.Query[any](ctx, schema.Db, statement, nil); err != nil {
+		if err := execDDL(ctx, schema.Db, statement); err != nil {
 			return err
 		}
 	}

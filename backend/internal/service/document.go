@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,7 @@ import (
 
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
+	"github.com/xmtrxi/edms/internal/dto"
 	"github.com/xmtrxi/edms/internal/queue"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/storage"
@@ -35,6 +38,7 @@ type DocumentService struct {
 	storage storage.Provider
 	queue   *queue.Client
 	search  *search.Client
+	access  *AccessService
 	log     *slog.Logger
 	mu      sync.Mutex
 }
@@ -46,6 +50,7 @@ func NewDocumentService(cfg config.Config, db *surrealdb.DB, provider storage.Pr
 		storage: provider,
 		queue:   q,
 		search:  s,
+		access:  NewAccessService(db),
 		log:     logger,
 	}
 }
@@ -63,11 +68,15 @@ func DocumentStoragePath(docID, filename string) string {
 }
 
 type UploadInput struct {
-	OwnerID  string
-	Name     string
-	MimeType string
-	File     io.Reader
-	Metadata map[string]any
+	OwnerID           string
+	FolderID          string
+	Name              string
+	MimeType          string
+	FolderPath        string
+	FolderColor       string
+	FolderCategoryIDs []string
+	File              io.Reader
+	Metadata          map[string]any
 }
 
 // Upload hashes to a temporary file first. This makes duplicate detection
@@ -104,8 +113,8 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 		return nil, false, fmt.Errorf("check duplicate: %w", err)
 	}
 	if existing != nil {
-		// The bytes already exist, so never create another row or upload them to
-		// Paperless. Re-OCR is an explicit action on the existing document.
+		// The bytes already exist, so never create another row or send them
+		// through OCR again. Re-OCR is an explicit action on the existing document.
 		return existing, true, nil
 	}
 	if _, err := temp.Seek(0, io.SeekStart); err != nil {
@@ -119,6 +128,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	doc := &database.Document{
 		ID:              database.RecordID(docID),
 		OwnerID:         in.OwnerID,
+		FolderID:        in.FolderID,
 		Name:            in.Name,
 		OriginalName:    in.Name,
 		MimeType:        in.MimeType,
@@ -127,7 +137,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 		StoragePath:     storagePath,
 		Checksum:        checksum,
 		Status:          database.DocumentStatusUploaded,
-		Metadata:        generatedMetadata(in.Name, storagePath, checksum, in.Metadata),
+		Metadata:        generatedMetadata(in.Name, storagePath, checksum, folderMetadata(in.Metadata, in.FolderPath, in.FolderColor, in.FolderCategoryIDs)),
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
@@ -151,10 +161,65 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	return created, false, nil
 }
 
+// Folders derives a SharePoint-like folder tree from document metadata. It
+// includes ancestor folders so a deep storage path can be browsed naturally.
+func (s *DocumentService) Folders(ctx context.Context, ownerID string) ([]dto.FolderResponse, error) {
+	results, err := surrealdb.Query[[]database.Document](ctx, s.DB,
+		"SELECT * FROM documents WHERE owner_id = $owner AND status != 'archived' ORDER BY updated_at DESC",
+		map[string]any{"owner": ownerID})
+	if err != nil {
+		return nil, err
+	}
+	if results == nil || len(*results) == 0 {
+		return []dto.FolderResponse{}, nil
+	}
+
+	type folderStats struct {
+		folder dto.FolderResponse
+		latest time.Time
+	}
+	stats := map[string]*folderStats{}
+	for _, doc := range (*results)[0].Result {
+		path := cleanFolderPath(metadataString(doc.Metadata, "folder_path", ""))
+		if path == "" {
+			continue
+		}
+		parts := strings.Split(path, "/")
+		for i := range parts {
+			current := strings.Join(parts[:i+1], "/")
+			entry := stats[current]
+			if entry == nil {
+				parent := strings.Join(parts[:i], "/")
+				entry = &folderStats{folder: dto.FolderResponse{Path: current, Name: parts[i], ParentPath: parent}}
+				stats[current] = entry
+			}
+			entry.folder.Count++
+			entry.folder.Size += doc.Size
+			if doc.UpdatedAt.After(entry.latest) {
+				entry.latest = doc.UpdatedAt
+				entry.folder.UpdatedAt = doc.UpdatedAt
+			}
+			if current == path {
+				if color := metadataString(doc.Metadata, "folder_color", ""); color != "" {
+					entry.folder.Color = color
+				}
+				entry.folder.CategoryIDs = metadataStringSlice(doc.Metadata, "folder_category_ids")
+			}
+		}
+	}
+
+	folders := make([]dto.FolderResponse, 0, len(stats))
+	for _, entry := range stats {
+		folders = append(folders, entry.folder)
+	}
+	slices.SortFunc(folders, func(a, b dto.FolderResponse) int { return strings.Compare(a.Path, b.Path) })
+	return folders, nil
+}
+
 func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, storagePath string) {
 	job := &database.ProcessingJob{
 		DocumentID: string(doc.ID),
-		Type:       "paperless_ocr",
+		Type:       "docling_ocr",
 		Status:     database.ProcessingJobStatusQueued,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
@@ -177,7 +242,7 @@ func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, 
 
 // ReOCR clears the current extraction and re-enqueues OCR processing.
 func (s *DocumentService) ReOCR(ctx context.Context, ownerID, id string) (*database.Document, error) {
-	doc, err := s.Get(ctx, ownerID, id)
+	doc, err := s.GetFor(ctx, ownerID, "edit", id)
 	if err != nil {
 		return nil, err
 	}
@@ -197,12 +262,30 @@ func (s *DocumentService) ReOCR(ctx context.Context, ownerID, id string) (*datab
 	return doc, nil
 }
 
+// LatestProcessingJob returns the most recent OCR job after confirming the
+// caller can read the document. Job data is intentionally exposed through the
+// EDMS API instead of letting browsers access Docling credentials directly.
+func (s *DocumentService) LatestProcessingJob(ctx context.Context, ownerID, id string) (*database.ProcessingJob, error) {
+	if _, err := s.Get(ctx, ownerID, id); err != nil {
+		return nil, err
+	}
+	job, err := surrealgoorm.Query[database.ProcessingJob](s.DB, "processing_jobs").WhereEq("document_id", id).OrderBy("created_at DESC").First(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return job, nil
+}
+
 func deleteDocumentExtractions(ctx context.Context, client *surrealdb.DB, documentID string) error {
 	_, err := surrealdb.Query[any](ctx, client, "DELETE FROM document_extractions WHERE document_id = $document_id", map[string]any{"document_id": documentID})
 	return err
 }
 
 func (s *DocumentService) Get(ctx context.Context, ownerID, id string) (*database.Document, error) {
+	return s.GetFor(ctx, ownerID, "view", id)
+}
+
+func (s *DocumentService) GetFor(ctx context.Context, userID, capability, id string) (*database.Document, error) {
 	rid, err := database.ParseRecordID(id)
 	if err != nil {
 		return nil, err
@@ -214,7 +297,11 @@ func (s *DocumentService) Get(ctx context.Context, ownerID, id string) (*databas
 	if doc == nil {
 		return nil, ErrDocumentNotFound
 	}
-	if doc.OwnerID != ownerID {
+	allowed, err := s.access.CanDocument(ctx, userID, capability, doc)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
 		return nil, ErrForbidden
 	}
 	return doc, nil
@@ -233,8 +320,50 @@ func (s *DocumentService) GetOCR(ctx context.Context, ownerID, id string) (*data
 	return doc, extraction, nil
 }
 
+func (s *DocumentService) GetFullOCR(ctx context.Context, ownerID, id string) (*database.Document, *database.DocumentExtraction, error) {
+	doc, extraction, err := s.GetOCR(ctx, ownerID, id)
+	if err != nil || extraction == nil {
+		return doc, extraction, err
+	}
+	if extraction.Metadata == nil {
+		extraction.Metadata = map[string]any{}
+	}
+	if path := metadataString(extraction.Metadata, "full_text_path", ""); path != "" {
+		text, err := s.readOCRArtifact(ctx, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		extraction.Text = text
+	}
+	if path := metadataString(extraction.Metadata, "markdown_path", ""); path != "" {
+		markdown, err := s.readOCRArtifact(ctx, path)
+		if err != nil {
+			return nil, nil, err
+		}
+		extraction.Metadata["markdown_preview"] = markdown
+	}
+	extraction.Metadata["full_content"] = true
+	return doc, extraction, nil
+}
+
+func (s *DocumentService) readOCRArtifact(ctx context.Context, path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	reader, err := s.storage.Download(ctx, path)
+	if err != nil {
+		return "", fmt.Errorf("download OCR artifact: %w", err)
+	}
+	defer reader.Close()
+	contents, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("read OCR artifact: %w", err)
+	}
+	return string(contents), nil
+}
+
 func (s *DocumentService) Download(ctx context.Context, ownerID, id string) (*database.Document, io.ReadCloser, error) {
-	doc, err := s.Get(ctx, ownerID, id)
+	doc, err := s.GetFor(ctx, ownerID, "download", id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -246,7 +375,7 @@ func (s *DocumentService) Download(ctx context.Context, ownerID, id string) (*da
 }
 
 func (s *DocumentService) Delete(ctx context.Context, ownerID, id string) error {
-	doc, err := s.Get(ctx, ownerID, id)
+	doc, err := s.GetFor(ctx, ownerID, "delete", id)
 	if err != nil {
 		return err
 	}

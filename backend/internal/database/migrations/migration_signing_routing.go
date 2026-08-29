@@ -3,7 +3,6 @@ package migrations
 import (
 	"context"
 
-	"github.com/surrealdb/surrealdb.go"
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
 )
 
@@ -21,7 +20,7 @@ func (m expandSigningRouting) Up(ctx context.Context, schema surrealgoorm.Schema
 		"DEFINE FIELD signing_request_id ON workflow_steps TYPE option<string>;",
 	}
 	for _, statement := range statements {
-		if _, err := surrealdb.Query[any](ctx, schema.Db, statement, nil); err != nil {
+		if err := execDDL(ctx, schema.Db, statement); err != nil {
 			return err
 		}
 	}

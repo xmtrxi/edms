@@ -5,6 +5,7 @@ import "time"
 type Document struct {
 	ID               RecordID       `json:"id,omitempty"`
 	OwnerID          string         `json:"owner_id"`
+	FolderID         string         `json:"folder_id,omitempty"`
 	Name             string         `json:"name"`
 	OriginalName     string         `json:"original_name"`
 	MimeType         string         `json:"mime_type"`

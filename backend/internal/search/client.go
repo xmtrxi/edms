@@ -43,6 +43,9 @@ type Document struct {
 	OriginalName string    `json:"original_name"`
 	MimeType     string    `json:"mime_type"`
 	Content      string    `json:"content"`
+	Summary      string    `json:"summary"`
+	Extension    string    `json:"extension"`
+	OCREngine    string    `json:"ocr_engine"`
 	Status       string    `json:"status"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
@@ -74,8 +77,11 @@ func (c *Client) Configure(ctx context.Context) error {
 	}
 
 	task, err := c.inner.Index(c.index).UpdateSettingsWithContext(ctx, &meilisearch.Settings{
-		FilterableAttributes: []string{"owner_id", "status"},
-		SearchableAttributes: []string{"name", "original_name", "content"},
+		FilterableAttributes: []string{"owner_id", "status", "mime_type", "extension", "ocr_engine"},
+		SearchableAttributes: []string{"name", "original_name", "summary", "content"},
+		DisplayedAttributes:  []string{"id", "record_id", "name", "original_name", "mime_type", "summary", "status", "created_at", "updated_at", "extension", "ocr_engine"},
+		SortableAttributes:   []string{"created_at", "updated_at", "name"},
+		RankingRules:         []string{"words", "typo", "proximity", "attribute", "sort", "exactness"},
 	})
 	if err != nil {
 		return fmt.Errorf("configure search index: %w", err)
@@ -129,12 +135,26 @@ type SearchInput struct {
 	Query    string
 	OwnerID  string
 	Status   string
+	MimeType string
+	Sort     string
 	Page     int
 	PageSize int
 }
 
+type Hit struct {
+	ID           string
+	RecordID     string
+	Name         string
+	OriginalName string
+	MimeType     string
+	Status       string
+	Snippet      string
+	Score        float64
+	UpdatedAt    time.Time
+}
+
 type SearchResult struct {
-	IDs       []string
+	Hits      []Hit
 	TotalHits int64
 	Page      int
 	PageSize  int
@@ -158,13 +178,24 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 	if in.Status != "" {
 		filters = append(filters, fmt.Sprintf("status = %q", in.Status))
 	}
+	if in.MimeType != "" {
+		filters = append(filters, fmt.Sprintf("mime_type = %q", in.MimeType))
+	}
 
 	req := &meilisearch.SearchRequest{
-		Offset: int64((in.Page - 1) * in.PageSize),
-		Limit:  int64(in.PageSize),
+		Offset:                int64((in.Page - 1) * in.PageSize),
+		Limit:                 int64(in.PageSize),
+		AttributesToHighlight: []string{"name", "original_name", "summary", "content"},
+		AttributesToCrop:      []string{"content:28", "summary:20"},
+		CropMarker:            "…",
+		HighlightPreTag:       "",
+		HighlightPostTag:      "",
 	}
 	if len(filters) > 0 {
 		req.Filter = strings.Join(filters, " AND ")
+	}
+	if in.Sort != "" {
+		req.Sort = []string{in.Sort}
 	}
 
 	res, err := c.inner.Index(c.index).SearchWithContext(ctx, in.Query, req)
@@ -172,26 +203,82 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 		return nil, err
 	}
 
-	ids := make([]string, 0, len(res.Hits))
+	hits := make([]Hit, 0, len(res.Hits))
 	for _, hit := range res.Hits {
-		var doc Document
-		if err := hit.DecodeInto(&doc); err != nil {
+		fields := map[string]any{}
+		if err := hit.DecodeInto(&fields); err != nil {
 			continue
 		}
+		doc := documentFromMap(fields)
 		recordID := strings.TrimSpace(doc.RecordID)
 		// Backward compatibility for entries created before record_id existed.
 		if recordID == "" && strings.Contains(doc.ID, ":") {
 			recordID = doc.ID
 		}
 		if recordID != "" {
-			ids = append(ids, recordID)
+			formatted, _ := fields["_formatted"].(map[string]any)
+			hits = append(hits, Hit{
+				ID:           doc.ID,
+				RecordID:     recordID,
+				Name:         doc.Name,
+				OriginalName: doc.OriginalName,
+				MimeType:     doc.MimeType,
+				Status:       doc.Status,
+				Snippet:      bestSnippet(formatted, doc),
+				UpdatedAt:    doc.UpdatedAt,
+			})
 		}
 	}
 
 	return &SearchResult{
-		IDs:       ids,
+		Hits:      hits,
 		TotalHits: res.TotalHits,
 		Page:      in.Page,
 		PageSize:  in.PageSize,
 	}, nil
+}
+
+func documentFromMap(fields map[string]any) Document {
+	return Document{
+		ID:           stringField(fields, "id"),
+		RecordID:     stringField(fields, "record_id"),
+		Name:         stringField(fields, "name"),
+		OriginalName: stringField(fields, "original_name"),
+		MimeType:     stringField(fields, "mime_type"),
+		Content:      stringField(fields, "content"),
+		Summary:      stringField(fields, "summary"),
+		Extension:    stringField(fields, "extension"),
+		OCREngine:    stringField(fields, "ocr_engine"),
+		Status:       stringField(fields, "status"),
+		UpdatedAt:    timeField(fields, "updated_at"),
+	}
+}
+
+func stringField(fields map[string]any, key string) string {
+	value, _ := fields[key].(string)
+	return value
+}
+
+func timeField(fields map[string]any, key string) time.Time {
+	value, _ := fields[key].(string)
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, _ := time.Parse(time.RFC3339Nano, value)
+	return parsed
+}
+
+func bestSnippet(formatted map[string]any, doc Document) string {
+	for _, key := range []string{"content", "summary", "name", "original_name"} {
+		if value, ok := formatted[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	if strings.TrimSpace(doc.Summary) != "" {
+		return strings.TrimSpace(doc.Summary)
+	}
+	if len(doc.Content) > 260 {
+		return strings.TrimSpace(doc.Content[:260]) + "…"
+	}
+	return strings.TrimSpace(doc.Content)
 }

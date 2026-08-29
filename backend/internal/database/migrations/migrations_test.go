@@ -28,6 +28,9 @@ func TestMigrationsAreRegisteredInOrder(t *testing.T) {
 		"015_create_document_categories_table",
 		"016_expand_versioning_and_routing",
 		"017_expand_signing_routing",
+		"018_add_folders_and_document_folder_id",
+		"019_add_casbin_access_and_forms",
+		"020_make_processing_job_completion_optional",
 	}
 	if len(migrations) != len(expected) {
 		t.Fatalf("expected %d migrations, got %d", len(expected), len(migrations))
@@ -60,5 +63,20 @@ func TestUserTableDefinitionUsesSurrealORMBuilder(t *testing.T) {
 		if !strings.Contains(sql, part) {
 			t.Fatalf("expected SQL to contain %q, got:\n%s", part, sql)
 		}
+	}
+}
+
+func TestNormalizeTableTypesUsesSurrealDBBooleanKind(t *testing.T) {
+	table := &surrealgoorm.Table{Name: "settings"}
+	table.Bool("enabled").Default(true)
+
+	normalizeTableTypes(table)
+
+	sql := table.Build()
+	if !strings.Contains(sql, "DEFINE FIELD enabled ON settings type bool DEFAULT true") {
+		t.Fatalf("expected bool field in SQL, got:\n%s", sql)
+	}
+	if strings.Contains(sql, "type boolean") {
+		t.Fatalf("unexpected invalid boolean kind in SQL:\n%s", sql)
 	}
 }

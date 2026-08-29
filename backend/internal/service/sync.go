@@ -109,7 +109,7 @@ func (s *DocumentService) listStorageFiles(ctx context.Context) ([]string, error
 
 func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storagePath string, dryRun bool) (bool, error) {
 	storagePath = filepath.ToSlash(strings.TrimPrefix(filepath.Clean(storagePath), "/"))
-	if storagePath == "." || isGeneratedArchive(storagePath) {
+	if storagePath == "." || isGeneratedArtifact(storagePath) {
 		return false, nil
 	}
 
@@ -140,7 +140,7 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 	}
 
 	// A file copied to another folder is still the same document. Keep the
-	// existing row instead of sending its bytes to Paperless a second time.
+	// existing row instead of sending its bytes through OCR a second time.
 	existing, err = s.findByChecksum(ctx, ownerID, checksum)
 	if err != nil || existing != nil {
 		return false, err
@@ -154,6 +154,7 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 
 	now := time.Now().UTC()
 	name := filepath.Base(storagePath)
+	folderPath := folderPathForStoragePath(storagePath)
 	doc := &database.Document{
 		ID:              database.RecordID(newDocumentID()),
 		OwnerID:         ownerID,
@@ -166,7 +167,8 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 		Checksum:        checksum,
 		Status:          database.DocumentStatusUploaded,
 		Metadata: generatedMetadata(name, storagePath, checksum, map[string]any{
-			"source": "storage_sync",
+			"source":      "storage_sync",
+			"folder_path": folderPath,
 		}),
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -265,7 +267,99 @@ func generatedMetadata(name, storagePath, checksum string, supplied map[string]a
 	return metadata
 }
 
-func isGeneratedArchive(path string) bool {
+func isGeneratedArtifact(path string) bool {
+	cleaned := filepath.ToSlash(path)
+	if strings.HasPrefix(cleaned, "documents/") {
+		parts := strings.Split(cleaned, "/")
+		if len(parts) > 3 && strings.HasPrefix(parts[1], "doc_") && parts[2] == "images" {
+			return true
+		}
+		if len(parts) == 3 && strings.HasPrefix(parts[1], "doc_") {
+			switch parts[2] {
+			case "ocr.json", "extracted.txt", "extracted.md":
+				return true
+			}
+		}
+	}
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-	return base == "archive" && strings.HasPrefix(filepath.ToSlash(path), "documents/doc_")
+	return base == "archive" && strings.HasPrefix(cleaned, "documents/doc_")
+}
+
+func folderPathForStoragePath(storagePath string) string {
+	dir := filepath.ToSlash(filepath.Dir(storagePath))
+	if dir == "." || dir == "" {
+		return ""
+	}
+	if strings.HasPrefix(dir, "documents/doc_") {
+		return ""
+	}
+	return cleanFolderPath(dir)
+}
+
+func folderMetadata(metadata map[string]any, folderPath, folderColor string, categoryIDs []string) map[string]any {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if path := cleanFolderPath(folderPath); path != "" {
+		metadata["folder_path"] = path
+	}
+	if color := strings.TrimSpace(folderColor); color != "" {
+		metadata["folder_color"] = color
+	}
+	if ids := cleanStringSlice(categoryIDs); len(ids) > 0 {
+		metadata["folder_category_ids"] = ids
+	}
+	return metadata
+}
+
+func cleanFolderPath(path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	path = strings.Trim(path, "/")
+	if path == "." {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		clean = append(clean, part)
+	}
+	return strings.Join(clean, "/")
+}
+
+func cleanStringSlice(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
+func metadataStringSlice(metadata map[string]any, key string) []string {
+	raw, ok := metadata[key]
+	if !ok {
+		return nil
+	}
+	switch values := raw.(type) {
+	case []string:
+		return cleanStringSlice(values)
+	case []any:
+		result := make([]string, 0, len(values))
+		for _, value := range values {
+			if value, ok := value.(string); ok {
+				result = append(result, value)
+			}
+		}
+		return cleanStringSlice(result)
+	}
+	return nil
 }

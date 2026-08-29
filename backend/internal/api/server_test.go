@@ -90,6 +90,21 @@ func TestCategoryRoutesRequireAuth(t *testing.T) {
 	}
 }
 
+func TestFolderRoutesRequireAuth(t *testing.T) {
+	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
+	for _, test := range []struct{ method, path string }{
+		{http.MethodGet, "/api/folders"}, {http.MethodPost, "/api/folders"},
+		{http.MethodPut, "/api/folders/folders:1"}, {http.MethodDelete, "/api/folders/folders:1"},
+	} {
+		req := httptest.NewRequest(test.method, test.path, nil)
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401, got %d", test.method, test.path, rec.Code)
+		}
+	}
+}
+
 func TestOpenAPIDocsAreServed(t *testing.T) {
 	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
 

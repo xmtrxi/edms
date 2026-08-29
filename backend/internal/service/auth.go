@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrEmailTaken         = errors.New("email already registered")
+	ErrRegistrationClosed = errors.New("registration is closed; request an invitation")
 )
 
 type AuthService struct {
@@ -70,6 +73,14 @@ func (s *AuthService) UserByID(ctx context.Context, id string) (*database.User, 
 	return surrealdb.Select[database.User](ctx, s.DB, rid)
 }
 
+func (s *AuthService) ListUsers(ctx context.Context) ([]database.User, error) {
+	result, err := surrealdb.Query[[]database.User](ctx, s.DB, "SELECT * FROM users WHERE status = $status ORDER BY name", map[string]any{"status": database.UserStatusActive})
+	if err != nil || result == nil || len(*result) == 0 {
+		return nil, err
+	}
+	return (*result)[0].Result, nil
+}
+
 type RegisterInput struct {
 	Email    string
 	Name     string
@@ -88,6 +99,14 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*database
 	if existing != nil {
 		return nil, ErrEmailTaken
 	}
+	registered, err := surrealdb.Query[[]database.User](ctx, s.DB, "SELECT * FROM users LIMIT 1", nil)
+	if err != nil {
+		return nil, err
+	}
+	firstUser := registered == nil || len(*registered) == 0 || len((*registered)[0].Result) == 0
+	if !firstUser {
+		return nil, ErrRegistrationClosed
+	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(in.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -104,7 +123,45 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*database
 		UpdatedAt:    now,
 	}
 
-	return surrealdb.Create[database.User](ctx, s.DB, "users", user)
+	created, err := surrealdb.Create[database.User](ctx, s.DB, "users", user)
+	if err != nil {
+		return nil, err
+	}
+	authz, err := NewAuthorizationService(s.DB)
+	if err != nil {
+		return nil, err
+	}
+	if err := authz.BootstrapAdmin(ctx, string(created.ID)); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+func (s *AuthService) AcceptInvitation(ctx context.Context, token, password string) (*database.User, error) {
+	if token == "" || len(password) < 8 {
+		return nil, ErrInvalidCredentials
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
+	r, err := surrealdb.Query[[]database.Invitation](ctx, s.DB, "SELECT * FROM invitations WHERE token_hash = $hash AND status = 'pending' LIMIT 1", map[string]any{"hash": hash})
+	if err != nil || r == nil || len(*r) == 0 || len((*r)[0].Result) == 0 {
+		return nil, fmt.Errorf("invitation is invalid or expired")
+	}
+	invite := (*r)[0].Result[0]
+	if time.Now().UTC().After(invite.ExpiresAt) {
+		return nil, fmt.Errorf("invitation is expired")
+	}
+	pass, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	user, err := surrealdb.Create[database.User](ctx, s.DB, "users", &database.User{Email: invite.Email, Name: invite.Name, PasswordHash: string(pass), Status: database.UserStatusActive, CreatedAt: now, UpdatedAt: now})
+	if err != nil {
+		return nil, err
+	}
+	rid, _ := database.ParseRecordID(string(invite.ID))
+	_, err = surrealdb.Merge[database.Invitation](ctx, s.DB, rid, map[string]any{"status": "accepted", "accepted_at": now})
+	return user, err
 }
 
 type LoginInput struct {

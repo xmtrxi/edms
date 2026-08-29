@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/xmtrxi/edms/internal/api"
@@ -12,8 +13,9 @@ import (
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/database/migrations"
+	"github.com/xmtrxi/edms/internal/docling"
+	"github.com/xmtrxi/edms/internal/gotenberg"
 	"github.com/xmtrxi/edms/internal/handler"
-	"github.com/xmtrxi/edms/internal/paperless"
 	"github.com/xmtrxi/edms/internal/queue"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/service"
@@ -36,7 +38,15 @@ func main() {
 	defer db.Close(ctx)
 
 	if err := database.AutoMigrate(ctx, db, migrations.Migrations()); err != nil {
-		logger.Warn("run migrations failed, continuing", "error", err)
+		// Migrations are now idempotent (IF NOT EXISTS + already-exists swallow),
+		// but keep a defensive check so an old DB with pre-existing schema doesn't
+		// crash the API on restart - "dont worry if the fields exist".
+		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			logger.Warn("migrations already applied, continuing", "error", err)
+		} else {
+			logger.Error("run migrations", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	provider, err := storage.NewProvider(ctx, cfg)
@@ -65,9 +75,13 @@ func main() {
 		defer queueClient.Close()
 	}
 
-	var paperlessClient *paperless.Client
-	if cfg.Paperless.BaseURL != "" {
-		paperlessClient = paperless.New(cfg.Paperless)
+	var doclingClient *docling.Client
+	if cfg.OCR.Docling.BaseURL != "" {
+		doclingClient = docling.New(cfg.OCR.Docling)
+	}
+	var gotenbergClient *gotenberg.Client
+	if cfg.OCR.Gotenberg != "" {
+		gotenbergClient = gotenberg.New(cfg.OCR.Gotenberg, cfg.OCR.Docling.Timeout)
 	}
 
 	var searchClient *search.Client
@@ -82,8 +96,8 @@ func main() {
 		}
 	}
 
-	ocrSvc := service.NewOCRService(db.Client(), provider, paperlessClient, searchClient, logger)
-	searchSvc := service.NewSearchService(db.Client(), searchClient, logger)
+	ocrSvc := service.NewOCRService(db.Client(), provider, doclingClient, gotenbergClient, searchClient, logger)
+	searchSvc := service.NewSearchService(db.Client(), provider, searchClient, logger)
 
 	if queueClient != nil {
 		worker, err := tasks.NewServer(cfg, ocrSvc, searchSvc, logger)
@@ -100,14 +114,13 @@ func main() {
 	}
 
 	server := api.New(cfg, handler.Deps{
-		Cfg:       cfg,
-		Logger:    logger,
-		DB:        db,
-		Cache:     cacheClient,
-		Storage:   provider,
-		Queue:     queueClient,
-		Paperless: paperlessClient,
-		Search:    searchClient,
+		Cfg:     cfg,
+		Logger:  logger,
+		DB:      db,
+		Cache:   cacheClient,
+		Storage: provider,
+		Queue:   queueClient,
+		Search:  searchClient,
 	})
 	if err := server.Start(ctx); err != nil {
 		logger.Error("api server stopped", "error", err)

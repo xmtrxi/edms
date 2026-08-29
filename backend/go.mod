@@ -17,7 +17,6 @@ require (
 	github.com/microsoftgraph/msgraph-sdk-go v1.100.0
 	github.com/surrealdb/surrealdb.go v1.6.0
 	github.com/valkey-io/valkey-go v1.0.76
-	github.com/xmtrxi/paperless-ngx.go v0.0.0-20260705204417-4f3d512eb062
 	golang.org/x/crypto v0.54.0
 )
 
@@ -35,12 +34,17 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.34 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.35 // indirect
 	github.com/aws/smithy-go v1.27.6 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
+	github.com/casbin/casbin/v3 v3.11.0 // indirect
+	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/hibiken/asynqmon v0.7.2 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/microsoft/kiota-abstractions-go v1.9.4 // indirect
 	github.com/microsoft/kiota-http-go v1.5.6 // indirect

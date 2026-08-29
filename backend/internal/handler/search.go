@@ -22,7 +22,7 @@ type SearchHandler struct {
 
 func NewSearchHandler(deps Deps) *SearchHandler {
 	return &SearchHandler{
-		service: service.NewSearchService(deps.Client(), deps.Search, deps.Logger),
+		service: service.NewSearchService(deps.Client(), deps.Storage, deps.Search, deps.Logger),
 		auth:    service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
 		queue:   deps.Queue,
 		log:     deps.Logger,
@@ -56,10 +56,12 @@ func (h *SearchHandler) search(c *echo.Context) error {
 		return respondError(c, http.StatusInternalServerError, "search failed")
 	}
 
-	items := make([]dto.DocumentResponse, 0, len(result.Items))
+	items := make([]dto.SearchResultResponse, 0, len(result.Items))
 	for i := range result.Items {
-		doc := result.Items[i]
-		items = append(items, dto.NewDocumentResponse(&doc).WithOwner(user))
+		item := result.Items[i]
+		response := dto.NewSearchResultResponse(&item.Document, item.Snippet)
+		response.DocumentResponse = response.DocumentResponse.WithOwner(user)
+		items = append(items, response)
 	}
 
 	return respondJSON(c, http.StatusOK, dto.List(items, result.Total, result.Page, result.PageSize))

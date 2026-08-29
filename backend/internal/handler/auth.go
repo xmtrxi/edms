@@ -20,8 +20,24 @@ func NewAuthHandler(deps Deps) *AuthHandler {
 
 func (h *AuthHandler) RegisterRoutes(api *echo.Group) {
 	api.POST("/auth/register", h.register)
+	api.POST("/auth/setup", h.setup)
 	api.POST("/auth/login", h.login)
 	api.GET("/auth/me", h.me, middleware.RequireAuth(h.service))
+	api.GET("/users", h.users, middleware.RequireAuth(h.service))
+}
+func (h *AuthHandler) setup(c *echo.Context) error {
+	var r struct {
+		Token    string `json:"token"`
+		Password string `json:"password"`
+	}
+	if err := bind(c, &r); err != nil {
+		return err
+	}
+	user, err := h.service.AcceptInvitation(c.Request().Context(), r.Token, r.Password)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(dto.NewUserResponse(user)))
 }
 
 type registerRequest struct {
@@ -79,4 +95,16 @@ func (h *AuthHandler) me(c *echo.Context) error {
 		return respondError(c, http.StatusUnauthorized, "unauthorized")
 	}
 	return respondJSON(c, http.StatusOK, dto.OK(dto.NewUserResponse(user)))
+}
+
+func (h *AuthHandler) users(c *echo.Context) error {
+	users, err := h.service.ListUsers(c.Request().Context())
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "failed to list users")
+	}
+	items := make([]dto.UserResponse, 0, len(users))
+	for i := range users {
+		items = append(items, dto.NewUserResponse(&users[i]))
+	}
+	return respondJSON(c, http.StatusOK, dto.List(items, int64(len(items)), 1, len(items)))
 }

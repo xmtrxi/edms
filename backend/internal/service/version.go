@@ -108,7 +108,7 @@ func (s *VersionService) Download(ctx context.Context, ownerID, documentID, vers
 }
 
 func (s *VersionService) Restore(ctx context.Context, ownerID, documentID, versionID, summary string) (*database.DocumentVersion, error) {
-	doc, err := s.docs.Get(ctx, ownerID, documentID)
+	doc, err := s.docs.GetFor(ctx, ownerID, "edit", documentID)
 	if err != nil {
 		return nil, err
 	}

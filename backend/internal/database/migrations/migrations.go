@@ -21,5 +21,8 @@ func Migrations() []surrealgoorm.Migration {
 		createDocumentCategoriesTable{},
 		expandVersioningAndRouting{},
 		expandSigningRouting{},
+		addFoldersAndDocumentFolderID{},
+		addAccessAndForms{},
+		makeProcessingJobCompletionOptional{},
 	}
 }

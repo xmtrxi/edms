@@ -11,26 +11,31 @@ import (
 	"github.com/labstack/echo/v5"
 
 	"github.com/xmtrxi/edms/internal/config"
+	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/dto"
 	"github.com/xmtrxi/edms/internal/middleware"
 	"github.com/xmtrxi/edms/internal/service"
 )
 
 type DocumentsHandler struct {
-	cfg        config.Config
-	docs       *service.DocumentService
-	auth       *service.AuthService
-	search     *service.SearchService
-	categories *service.CategoryService
+	cfg           config.Config
+	docs          *service.DocumentService
+	auth          *service.AuthService
+	search        *service.SearchService
+	categories    *service.CategoryService
+	folderService *service.FolderService
+	access        *service.AccessService
 }
 
 func NewDocumentsHandler(deps Deps) *DocumentsHandler {
 	return &DocumentsHandler{
-		cfg:        deps.Cfg,
-		docs:       service.NewDocumentService(deps.Cfg, deps.Client(), deps.Storage, deps.Queue, deps.Search, deps.Logger),
-		auth:       service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
-		search:     service.NewSearchService(deps.Client(), deps.Search, deps.Logger),
-		categories: service.NewCategoryService(deps.Client()),
+		cfg:           deps.Cfg,
+		docs:          service.NewDocumentService(deps.Cfg, deps.Client(), deps.Storage, deps.Queue, deps.Search, deps.Logger),
+		auth:          service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
+		search:        service.NewSearchService(deps.Client(), deps.Storage, deps.Search, deps.Logger),
+		categories:    service.NewCategoryService(deps.Client()),
+		folderService: service.NewFolderService(deps.Client()),
+		access:        service.NewAccessService(deps.Client()),
 	}
 }
 
@@ -39,8 +44,10 @@ func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
 	g.GET("", h.list)
 	g.POST("", h.upload)
 	g.POST("/sync", h.sync)
+	g.GET("/folders", h.folders)
 	g.GET("/:id", h.get)
 	g.GET("/:id/ocr", h.ocr)
+	g.GET("/:id/processing-job", h.processingJob)
 	g.POST("/:id/redo-ocr", h.redoOCR)
 	g.GET("/:id/download", h.download)
 	g.PUT("/:id/category", h.setCategory)
@@ -74,6 +81,8 @@ func (h *DocumentsHandler) list(c *echo.Context) error {
 		Query:       c.QueryParam("q"),
 		OwnerID:     string(user.ID),
 		Status:      c.QueryParam("status"),
+		FolderPath:  strings.TrimSpace(c.QueryParam("folder_path")),
+		FolderID:    strings.TrimSpace(c.QueryParam("folder_id")),
 		DocumentIDs: documentIDs,
 		Page:        page,
 		PageSize:    pageSize,
@@ -84,7 +93,7 @@ func (h *DocumentsHandler) list(c *echo.Context) error {
 
 	ids := make([]string, 0, len(result.Items))
 	for i := range result.Items {
-		ids = append(ids, string(result.Items[i].ID))
+		ids = append(ids, string(result.Items[i].Document.ID))
 	}
 	categories, err := h.categories.CategoriesForDocuments(c.Request().Context(), ids)
 	if err != nil {
@@ -93,11 +102,28 @@ func (h *DocumentsHandler) list(c *echo.Context) error {
 
 	items := make([]dto.DocumentResponse, 0, len(result.Items))
 	for i := range result.Items {
-		doc := result.Items[i]
+		doc := result.Items[i].Document
 		items = append(items, dto.NewDocumentResponse(&doc).WithOwner(user).WithCategory(categoryFor(categories, string(doc.ID))))
 	}
 
 	return respondJSON(c, http.StatusOK, dto.List(items, result.Total, result.Page, result.PageSize))
+}
+
+func (h *DocumentsHandler) folders(c *echo.Context) error {
+	user := middleware.CurrentUser(c)
+	folders, err := h.docs.Folders(c.Request().Context(), string(user.ID))
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "failed to list folders")
+	}
+	for i := range folders {
+		for _, categoryID := range folders[i].CategoryIDs {
+			category, err := h.categories.Get(c.Request().Context(), string(user.ID), categoryID)
+			if err == nil {
+				folders[i].Categories = append(folders[i].Categories, dto.NewCategoryResponse(category, 0))
+			}
+		}
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(folders))
 }
 
 func categoryFor(categories map[string]dto.CategoryResponse, documentID string) *dto.CategoryResponse {
@@ -150,17 +176,33 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 	}
 
 	categoryID := strings.TrimSpace(c.FormValue("category_id"))
+	folderID := strings.TrimSpace(c.FormValue("folder_id"))
+	if folderID != "" {
+		if err := h.access.RequireFolder(c.Request().Context(), string(user.ID), "upload", folderID); err != nil {
+			return respondError(c, http.StatusForbidden, "you do not have upload access to this folder")
+		}
+	}
 	if categoryID != "" {
 		if _, err := h.categories.Get(c.Request().Context(), string(user.ID), categoryID); err != nil {
 			return respondError(c, http.StatusBadRequest, "select a valid category")
 		}
 	}
+	folderCategoryIDs := parseStringList(c.FormValue("folder_category_ids"))
+	for _, id := range folderCategoryIDs {
+		if _, err := h.categories.Get(c.Request().Context(), string(user.ID), id); err != nil {
+			return respondError(c, http.StatusBadRequest, "select valid folder categories")
+		}
+	}
 	doc, duplicate, err := h.docs.Upload(c.Request().Context(), service.UploadInput{
-		OwnerID:  string(user.ID),
-		Name:     name,
-		MimeType: mime,
-		File:     src,
-		Metadata: metadata,
+		OwnerID:           string(user.ID),
+		FolderID:          folderID,
+		Name:              name,
+		MimeType:          mime,
+		FolderPath:        c.FormValue("folder_path"),
+		FolderColor:       c.FormValue("folder_color"),
+		FolderCategoryIDs: folderCategoryIDs,
+		File:              src,
+		Metadata:          metadata,
 	})
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "failed to upload document")
@@ -182,6 +224,18 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 		return respondJSON(c, http.StatusOK, dto.WithMessage(response, "duplicate file already exists; upload skipped"))
 	}
 	return respondJSON(c, http.StatusCreated, dto.Created(response))
+}
+
+func parseStringList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var values []string
+	if strings.HasPrefix(raw, "[") && json.Unmarshal([]byte(raw), &values) == nil {
+		return values
+	}
+	return strings.Split(raw, ",")
 }
 
 func (h *DocumentsHandler) sync(c *echo.Context) error {
@@ -208,7 +262,7 @@ func (h *DocumentsHandler) sync(c *echo.Context) error {
 
 func (h *DocumentsHandler) get(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	doc, extraction, err := h.docs.GetOCR(c.Request().Context(), string(user.ID), c.Param("id"))
+	doc, extraction, err := h.docs.GetFullOCR(c.Request().Context(), string(user.ID), c.Param("id"))
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -224,7 +278,7 @@ func (h *DocumentsHandler) get(c *echo.Context) error {
 // category_id is empty.
 func (h *DocumentsHandler) setCategory(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	doc, err := h.docs.Get(c.Request().Context(), string(user.ID), c.Param("id"))
+	doc, err := h.docs.GetFor(c.Request().Context(), string(user.ID), "edit", c.Param("id"))
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -253,7 +307,14 @@ func (h *DocumentsHandler) setCategory(c *echo.Context) error {
 
 func (h *DocumentsHandler) ocr(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	_, extraction, err := h.docs.GetOCR(c.Request().Context(), string(user.ID), c.Param("id"))
+	loadFull, _ := strconv.ParseBool(c.QueryParam("full"))
+	var extraction *database.DocumentExtraction
+	var err error
+	if loadFull {
+		_, extraction, err = h.docs.GetFullOCR(c.Request().Context(), string(user.ID), c.Param("id"))
+	} else {
+		_, extraction, err = h.docs.GetOCR(c.Request().Context(), string(user.ID), c.Param("id"))
+	}
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -261,6 +322,18 @@ func (h *DocumentsHandler) ocr(c *echo.Context) error {
 		return respondError(c, http.StatusNotFound, "ocr not available for this document")
 	}
 	return respondJSON(c, http.StatusOK, dto.OK(dto.NewOCRResponse(extraction)))
+}
+
+func (h *DocumentsHandler) processingJob(c *echo.Context) error {
+	user := middleware.CurrentUser(c)
+	job, err := h.docs.LatestProcessingJob(c.Request().Context(), string(user.ID), c.Param("id"))
+	if err != nil {
+		return h.handleError(c, err)
+	}
+	if job == nil {
+		return respondError(c, http.StatusNotFound, "processing job not available for this document")
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(dto.NewProcessingJobResponse(job)))
 }
 
 func (h *DocumentsHandler) redoOCR(c *echo.Context) error {

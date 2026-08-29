@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type AppConfig struct {
@@ -53,13 +54,20 @@ type QueueConfig struct {
 	RedisURL    string
 	Concurrency int
 }
-type PaperlessConfig struct {
+type DoclingConfig struct {
 	BaseURL string
-	Token   string
+	APIKey  string
+	Timeout time.Duration
+}
+type OCRConfig struct {
+	Provider  string
+	Docling   DoclingConfig
+	Gotenberg string
 }
 type JWTConfig struct {
 	Secret string
 }
+type SMTPConfig struct{ Host, Port, Username, Password, From, AppURL string }
 type SearchConfig struct {
 	URL    string
 	APIKey string
@@ -75,8 +83,9 @@ type Config struct {
 	Signing         SigningConfig
 	Cache           CacheConfig
 	Queue           QueueConfig
-	Paperless       PaperlessConfig
+	OCR             OCRConfig
 	JWT             JWTConfig
+	SMTP            SMTPConfig
 	Search          SearchConfig
 }
 
@@ -128,19 +137,37 @@ func Load(env string) Config {
 			RedisURL:    getEnv("REDIS_URL"),
 			Concurrency: getEnvInt("QUEUE_CONCURRENCY", 10),
 		},
-		Paperless: PaperlessConfig{
-			BaseURL: getEnv("PAPERLESS_BASE_URL"),
-			Token:   getEnv("PAPERLESS_TOKEN"),
+		OCR: OCRConfig{
+			Provider: getEnvDefault("OCR_PROVIDER", "docling"),
+			Docling: DoclingConfig{
+				BaseURL: getEnv("DOCLING_BASE_URL"),
+				APIKey:  getEnv("DOCLING_API_KEY"),
+				Timeout: getEnvDuration("DOCLING_TIMEOUT", 10*time.Minute),
+			},
+			Gotenberg: getEnv("GOTENBERG_BASE_URL"),
 		},
 		JWT: JWTConfig{
 			Secret: getEnv("JWT_SECRET"),
 		},
+		SMTP: SMTPConfig{Host: getEnv("SMTP_HOST"), Port: getEnvDefault("SMTP_PORT", "587"), Username: getEnv("SMTP_USERNAME"), Password: getEnv("SMTP_PASSWORD"), From: getEnv("SMTP_FROM"), AppURL: getEnvDefault("APP_URL", "http://localhost:3000")},
 		Search: SearchConfig{
 			URL:    getEnv("MEILI_URL"),
 			APIKey: getEnv("MEILI_MASTER_KEY"),
 			Index:  getEnvDefault("MEILI_INDEX", "documents"),
 		},
 	}
+}
+
+func getEnvDuration(key string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func loadDotEnv(filename string) {
