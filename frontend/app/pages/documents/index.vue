@@ -7,6 +7,7 @@
   import { Button } from "@/components/ui/button";
 
   const uploadOpen = shallowRef(false);
+  const selectedFolderPath = shallowRef("");
   const syncing = shallowRef(false);
   const dryRunning = shallowRef(false);
   const browser = useTemplateRef<InstanceType<typeof DocumentsBrowser>>("browser");
@@ -30,7 +31,7 @@
   });
 
   const newFolder = () => {
-    toast.info("Folder creation — coming soon");
+    uploadOpen.value = true;
   };
 
   const onUploaded = () => {
@@ -107,6 +108,11 @@
       <UploadCloudIcon class="h-4 w-4" /> Upload
     </Button>
   </Teleport>
-  <DocumentsBrowser ref="browser" />
-  <UploadDialog :open="uploadOpen" @update:open="uploadOpen = $event" @uploaded="onUploaded" />
+  <DocumentsBrowser ref="browser" @folder-change="selectedFolderPath = $event" />
+  <UploadDialog
+    :open="uploadOpen"
+    :initial-folder-path="selectedFolderPath"
+    @update:open="uploadOpen = $event"
+    @uploaded="onUploaded"
+  />
 </template>

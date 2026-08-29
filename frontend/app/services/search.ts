@@ -1,8 +1,8 @@
-import type { ApiMeta, ApiResponse, Document, ListDocumentsParams } from "@/types/api";
+import type { ApiMeta, ApiResponse, ListDocumentsParams, SearchResultDocument } from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
 
 export const searchService = () => {
-  const results = ref<Document[]>([]);
+  const results = ref<SearchResultDocument[]>([]);
   const meta = ref<ApiMeta | null>(null);
   const loading = ref(false);
   const error = ref("");
@@ -13,7 +13,7 @@ export const searchService = () => {
     const seq = ++requestSeq;
     loading.value = true;
     try {
-      const res = await $api<ApiResponse<Document[]>>("/search", {
+      const res = await $api<ApiResponse<SearchResultDocument[]>>("/search", {
         query: { q, ...params },
       });
       if (seq !== requestSeq) return;

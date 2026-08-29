@@ -14,6 +14,7 @@
     "lint:fix": "oxlint --fix"
   },
   "dependencies": {
+    "@comark/nuxt": "^0.6.2",
     "@lucide/vue": "^1.33.0",
     "@nuxt/fonts": "0.14.0",
     "@nuxt/icon": "2.4.1",
@@ -24,6 +25,7 @@
     "@vueuse/core": "^14.4.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "comark": "^0.6.2",
     "embla-carousel-vue": "^8.6.0",
     "lucide-vue-next": "^1.0.0",
     "nuxt": "^4.5.2",
@@ -41,7 +43,9 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.4.0",
     "oxfmt": "^0.61.0",
     "oxlint": "^1.79.0",
     "shadcn-vue": "^2.8.2",

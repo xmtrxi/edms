@@ -2,7 +2,9 @@
   import {
     ArrowLeftIcon,
     ChevronDownIcon,
+    ChevronRightIcon,
     EyeIcon,
+    FolderOpenIcon,
     LayoutGridIcon,
     ListIcon,
     SearchIcon,
@@ -24,7 +26,7 @@
   } from "@/components/ui/dropdown-menu";
   import { Input } from "@/components/ui/input";
   import { cn } from "@/lib/utils";
-  import type { Document } from "@/types/api";
+  import type { Document, DocumentFolder } from "@/types/api";
   import { formatBytes, formatDate, fileTypeFromMime, initialsOf } from "@/utils/format";
   import { getStatusMeta } from "@/utils/status";
 
@@ -42,6 +44,7 @@
       showSearch: true,
     },
   );
+  const emit = defineEmits<{ "folder-change": [path: string] }>();
 
   const service = documentsService();
   const { documents, meta, loading, error } = service;
@@ -56,6 +59,8 @@
   const status = ref(props.initialStatus);
   const categoryId = ref("");
   const page = ref(1);
+  const folderPath = ref("");
+  const folders = ref<DocumentFolder[]>([]);
 
   const selectedCategory = computed(() =>
     categories.value.find((category) => category.id === categoryId.value),
@@ -64,13 +69,24 @@
   const totalPages = computed(() => Math.max(1, Math.ceil((meta.value?.total ?? 0) / PAGE_SIZE)));
 
   const load = () => {
+    void service.fetchFolders().then((items) => (folders.value = items));
     service.fetchDocuments({
       q: query.value.trim() || undefined,
       status: status.value || undefined,
       category_id: categoryId.value || undefined,
+      folder_path: folderPath.value || undefined,
       page: page.value,
       page_size: PAGE_SIZE,
     });
+  };
+
+  const visibleFolders = computed(() =>
+    folders.value.filter((folder) => (folder.parent_path ?? "") === folderPath.value),
+  );
+  const selectFolder = (path: string) => {
+    folderPath.value = path;
+    page.value = 1;
+    emit("folder-change", path);
   };
 
   load();
@@ -83,7 +99,7 @@
     onCleanup(() => clearTimeout(t));
   });
 
-  watch([status, categoryId, page], () => {
+  watch([status, categoryId, page, folderPath], () => {
     load();
   });
 
@@ -95,11 +111,12 @@
     query.value = "";
     status.value = "";
     categoryId.value = "";
+    selectFolder("");
     page.value = 1;
   };
 
   const hasActiveFilters = computed(
-    () => !!query.value.trim() || !!status.value || !!categoryId.value,
+    () => !!query.value.trim() || !!status.value || !!categoryId.value || !!folderPath.value,
   );
 
   const statusOptions = ["uploaded", "processing", "ready", "failed", "archived"] as const;
@@ -216,6 +233,64 @@
         >
           <LayoutGridIcon class="h-3.5 w-3.5" />
         </Button>
+      </div>
+    </div>
+
+    <div v-if="visibleFolders.length" class="mb-5 space-y-3">
+      <div class="flex items-center gap-1 text-xs">
+        <button class="text-muted-foreground hover:text-foreground" @click="selectFolder('')">
+          Library
+        </button>
+        <template v-if="folderPath">
+          <ChevronRightIcon class="text-muted-foreground/60 h-3.5 w-3.5" />
+          <template v-for="(crumb, index) in folderPath.split('/')" :key="crumb">
+            <button
+              class="text-muted-foreground hover:text-foreground max-w-32 truncate"
+              @click="
+                selectFolder(
+                  folderPath
+                    .split('/')
+                    .slice(0, index + 1)
+                    .join('/'),
+                )
+              "
+            >
+              {{ crumb }}
+            </button>
+            <ChevronRightIcon
+              v-if="index < folderPath.split('/').length - 1"
+              class="text-muted-foreground/60 h-3.5 w-3.5"
+            />
+          </template>
+        </template>
+      </div>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <button
+          v-for="folder in visibleFolders"
+          :key="folder.path"
+          class="border-border bg-card hover:border-primary/40 hover:bg-secondary/30 flex items-center gap-3 rounded-xl border p-3 text-left transition-colors"
+          @click="selectFolder(folder.path)"
+        >
+          <span
+            class="grid h-9 w-9 shrink-0 place-items-center rounded-lg"
+            :style="{
+              backgroundColor: `${folder.color || '#6366f1'}20`,
+              color: folder.color || '#6366f1',
+            }"
+          >
+            <FolderOpenIcon class="h-4 w-4" />
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="text-foreground block truncate text-sm font-medium">{{
+              folder.name
+            }}</span>
+            <span class="text-muted-foreground text-[11px]"
+              >{{ folder.count }} document{{ folder.count === 1 ? "" : "s" }} ·
+              {{ formatBytes(folder.size) }}</span
+            >
+          </span>
+          <ChevronRightIcon class="text-muted-foreground h-4 w-4 shrink-0" />
+        </button>
       </div>
     </div>
 

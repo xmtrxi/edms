@@ -7,37 +7,26 @@
     HistoryIcon,
     Loader2Icon,
     RefreshCwIcon,
-    ScanLineIcon,
   } from "@lucide/vue";
+  import { useIntervalFn } from "@vueuse/core";
   import { computed, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import { toast } from "vue-sonner";
 
+  import DocumentMetadataPanel from "@/components/documents/DocumentMetadataPanel.vue";
+  import DocumentOcrViewer from "@/components/documents/DocumentOcrViewer.vue";
+  import DocumentProcessingPanel from "@/components/documents/DocumentProcessingPanel.vue";
   import DocumentRoutingPanel from "@/components/documents/DocumentRoutingPanel.vue";
   import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
-  import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-    AlertDialogTrigger,
-  } from "@/components/ui/alert-dialog";
-  import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-  import { Badge } from "@/components/ui/badge";
-  import { Button } from "@/components/ui/button";
-  import { Separator } from "@/components/ui/separator";
   import type {
     CreateDocumentRoute,
     Document,
     DocumentContributors,
     DocumentRoute,
     DocumentVersion,
+    ProcessingJob,
     RouteDecision,
   } from "@/types/api";
   import { formatBytes, formatDateTime, fileTypeFromMime, initialsOf } from "@/utils/format";
@@ -60,6 +49,8 @@
   const versions = ref<DocumentVersion[]>([]);
   const contributors = ref<DocumentContributors | null>(null);
   const documentRoutes = ref<DocumentRoute[]>([]);
+  const processingJob = ref<ProcessingJob | null>(null);
+  const refreshingProcessingJob = ref(false);
   const loading = ref(true);
   const error = ref("");
   const archiving = ref(false);
@@ -80,6 +71,7 @@
       versions.value = loadedVersions;
       contributors.value = loadedContributors;
       documentRoutes.value = loadedRoutes;
+      processingJob.value = await service.fetchProcessingJob(docId.value);
     }
     loading.value = false;
     if (!doc.value) error.value = service.error;
@@ -88,11 +80,37 @@
   load();
   watch(docId, load);
 
+  const refreshProcessingJob = async () => {
+    if (!doc.value || refreshingProcessingJob.value) return;
+    refreshingProcessingJob.value = true;
+    processingJob.value = await service.fetchProcessingJob(docId.value);
+    const refreshedDocument = await service.fetchDocument(docId.value);
+    if (refreshedDocument) doc.value = refreshedDocument;
+    refreshingProcessingJob.value = false;
+  };
+
+  const { pause: pauseProcessingRefresh, resume: resumeProcessingRefresh } = useIntervalFn(
+    refreshProcessingJob,
+    3_000,
+    { immediate: false },
+  );
+
+  watch(
+    () => doc.value?.status,
+    (status) => {
+      if (status === "uploaded" || status === "processing") resumeProcessingRefresh();
+      else pauseProcessingRefresh();
+    },
+    { immediate: true },
+  );
+
   const handleDownload = async () => {
     if (!doc.value) return;
     await service.download(doc.value.id, doc.value.name);
     if (service.error) toast.error(service.error);
   };
+
+  const openFullOcr = () => router.push(`/documents/${docId.value}/ocr`);
 
   const handleRedoOCR = async () => {
     if (!doc.value) return;
@@ -265,33 +283,14 @@
           </div>
         </div>
 
-        <div class="border-border bg-card rounded-xl border p-5">
-          <div class="mb-3 flex items-center gap-2">
-            <ScanLineIcon class="text-primary h-4 w-4" />
-            <h3 class="text-sm font-semibold">Extracted text</h3>
-            <StatusBadges :status="doc.status" class="ml-auto" />
-          </div>
-          <div v-if="doc.ocr?.text" class="max-h-96 overflow-y-auto pr-1">
-            <pre
-              class="bg-secondary/40 text-foreground/80 rounded-lg p-4 font-mono text-xs leading-relaxed whitespace-pre-wrap"
-              >{{ doc.ocr.text }}</pre>
-          </div>
-          <div
-            v-else-if="doc.status === 'processing'"
-            class="text-muted-foreground flex items-center gap-2 text-xs"
-          >
-            <Loader2Icon class="h-3.5 w-3.5 animate-spin" /> OCR is still processing this document…
-          </div>
-          <div
-            v-else
-            class="text-muted-foreground rounded-xl border border-dashed p-6 text-center text-xs"
-          >
-            No extracted text yet.
-            <Button size="sm" variant="outline" class="mt-2 gap-1.5" @click="handleRedoOCR">
-              <RefreshCwIcon class="h-3.5 w-3.5" /> Run OCR
-            </Button>
-          </div>
-        </div>
+        <DocumentOcrViewer
+          :document="doc"
+          :busy="redoingOcr"
+          @rerun="handleRedoOCR"
+          @view-full="openFullOcr"
+        />
+
+        <DocumentProcessingPanel :job="processingJob" :refreshing="refreshingProcessingJob" />
 
         <DocumentVersionHistory
           :versions="versions"
@@ -418,23 +417,7 @@
           <p v-else class="text-muted-foreground text-xs">Not shared.</p>
         </div>
 
-        <div
-          v-if="Object.keys(doc.metadata ?? {}).length"
-          class="border-border bg-card rounded-xl border p-4"
-        >
-          <p class="text-muted-foreground mb-2 text-xs font-semibold tracking-wider uppercase">
-            Metadata
-          </p>
-          <div class="flex flex-wrap gap-1">
-            <Badge
-              v-for="(value, key) in doc.metadata"
-              :key="key"
-              variant="secondary"
-              class="border-0 text-[10px]"
-              >{{ key }}: {{ String(value) }}</Badge
-            >
-          </div>
-        </div>
+        <DocumentMetadataPanel :document="doc" />
       </div>
     </div>
   </template>

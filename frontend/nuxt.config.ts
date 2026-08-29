@@ -5,7 +5,14 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: true },
 
-  modules: ["@nuxt/fonts", "@nuxt/scripts", "@nuxt/icon", "shadcn-nuxt", "@pinia/nuxt"],
+  modules: [
+    "@nuxt/fonts",
+    "@nuxt/scripts",
+    "@nuxt/icon",
+    "shadcn-nuxt",
+    "@pinia/nuxt",
+    "@comark/nuxt",
+  ],
 
   imports: {
     dirs: ["./services"],

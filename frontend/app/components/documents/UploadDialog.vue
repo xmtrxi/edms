@@ -24,6 +24,7 @@
     DialogTitle,
   } from "@/components/ui/dialog";
   import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+  import { Input } from "@/components/ui/input";
   import { Progress } from "@/components/ui/progress";
   import {
     Select,
@@ -38,7 +39,9 @@
   import { cn } from "@/lib/utils";
   import { formatBytes } from "@/utils/format";
 
-  const props = defineProps<{ open: boolean }>();
+  const props = withDefaults(defineProps<{ open: boolean; initialFolderPath?: string }>(), {
+    initialFolderPath: "",
+  });
   const emit = defineEmits<{ "update:open": [value: boolean]; uploaded: [id: string] }>();
 
   interface QueueItem {
@@ -48,6 +51,8 @@
     stage: "uploading" | "done" | "failed";
     categoryId?: string;
     categoryName?: string;
+    folderPath?: string;
+    folderId?: string;
     error?: string;
   }
 
@@ -60,6 +65,12 @@
   const input = ref<HTMLInputElement | null>(null);
   const uploading = ref(false);
   const selectedCategoryId = shallowRef("none");
+  const folderPath = ref(props.initialFolderPath);
+  const folderService = foldersService();
+  const { folders } = folderService;
+  const selectedFolderId = shallowRef("none");
+  const folderColor = ref("#6366f1");
+  const folderCategoryId = shallowRef("none");
 
   const parentCategories = computed(() =>
     categories.value.filter((category) => !category.parent_id),
@@ -72,7 +83,9 @@
   watch(
     () => props.open,
     (open) => {
+      if (open) folderPath.value = props.initialFolderPath;
       if (open && !categoryService.loaded.value) void categoryService.fetchCategories();
+      if (open && !folders.value.length) void folderService.fetchFolders();
     },
     { immediate: true },
   );
@@ -85,6 +98,8 @@
       stage: "uploading",
       categoryId: selectedCategory.value?.id,
       categoryName: selectedCategory.value?.name,
+      folderPath: folderPath.value.trim() || undefined,
+      folderId: selectedFolderId.value !== "none" ? selectedFolderId.value : undefined,
     }));
     queue.value = [...queue.value, ...items];
     tab.value = "progress";
@@ -104,7 +119,13 @@
       const pending = queue.value.filter((q) => q.stage === "uploading");
       for (const item of pending) {
         item.progress = 15;
-        const doc = await service.upload(item.file, item.file.name, item.categoryId);
+        const doc = await service.upload(item.file, item.file.name, item.categoryId, {
+          folderId: item.folderId,
+          folderPath: item.folderPath,
+          folderColor: folderPath.value.trim() ? folderColor.value : undefined,
+          folderCategoryIds:
+            folderCategoryId.value !== "none" ? [folderCategoryId.value] : undefined,
+        });
         if (doc) {
           item.progress = 100;
           item.stage = "done";
@@ -230,6 +251,61 @@
             </FieldDescription>
           </Field>
 
+          <Field>
+            <FieldLabel>Destination folder</FieldLabel>
+            <Select v-model="selectedFolderId">
+              <SelectTrigger class="w-full"
+                ><SelectValue placeholder="Choose a folder"
+              /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No managed folder</SelectItem>
+                <SelectItem v-for="folder in folders" :key="folder.id" :value="folder.id">
+                  {{ "— ".repeat(folder.depth) }}{{ folder.name }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <FieldDescription
+              >Managed folders keep documents and permissions organized. Legacy paths remain
+              available for storage sync.</FieldDescription
+            >
+          </Field>
+
+          <div class="grid gap-3 sm:grid-cols-[1fr_auto]">
+            <Field>
+              <FieldLabel>Folder path</FieldLabel>
+              <Input v-model="folderPath" placeholder="e.g. Finance / 2026 / Invoices" />
+              <FieldDescription
+                >Use / to create nested folders. Existing synced paths are
+                preserved.</FieldDescription
+              >
+            </Field>
+            <Field class="sm:w-28">
+              <FieldLabel>Color</FieldLabel>
+              <Input v-model="folderColor" type="color" class="h-9 cursor-pointer p-1" />
+            </Field>
+          </div>
+
+          <Field>
+            <FieldLabel>Folder tag</FieldLabel>
+            <Select v-model="folderCategoryId">
+              <SelectTrigger class="w-full"
+                ><SelectValue placeholder="No folder tag"
+              /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No folder tag</SelectItem>
+                <SelectItem
+                  v-for="category in categories"
+                  :key="category.id"
+                  :value="category.id"
+                  >{{ category.name }}</SelectItem
+                >
+              </SelectContent>
+            </Select>
+            <FieldDescription
+              >Tag the destination folder for quick filtering and organization.</FieldDescription
+            >
+          </Field>
+
           <div class="grid grid-cols-2 gap-2">
             <div
               v-for="fmt in [
@@ -279,6 +355,7 @@
                   </div>
                   <p class="text-muted-foreground mt-0.5 text-[10px]">
                     {{ q.categoryName ? `Category: ${q.categoryName}` : "Uncategorized" }}
+                    <span v-if="q.folderPath"> · Folder: {{ q.folderPath }}</span>
                   </p>
                   <div class="mt-2 flex items-center gap-2">
                     <Progress :model-value="q.progress" class="h-1.5 flex-1" />

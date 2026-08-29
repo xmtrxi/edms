@@ -3,12 +3,14 @@ import type {
   ApiResponse,
   CreateDocumentRoute,
   Document,
+  DocumentFolder,
   DocumentContributors,
   DocumentHistoryEvent,
   DocumentRoute,
   DocumentVersion,
   ListDocumentsParams,
   OCRResponse,
+  ProcessingJob,
   RouteDecision,
   StorageSyncResult,
 } from "@/types/api";
@@ -47,6 +49,17 @@ export const documentsService = () => {
     } catch (err) {
       error.value = apiErrorMessage(err);
       return null;
+    }
+  };
+
+  const fetchFolders = async (): Promise<DocumentFolder[]> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<DocumentFolder[]>>("/documents/folders");
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return [];
     }
   };
 
@@ -168,10 +181,22 @@ export const documentsService = () => {
     }
   };
 
-  const fetchOCR = async (id: string): Promise<OCRResponse | null> => {
+  const fetchOCR = async (id: string, full = false): Promise<OCRResponse | null> => {
     const { $api } = useNuxtApp();
     try {
-      const res = await $api<ApiResponse<OCRResponse>>(`/documents/${id}/ocr`);
+      const res = await $api<ApiResponse<OCRResponse>>(`/documents/${id}/ocr`, {
+        query: full ? { full: "true" } : undefined,
+      });
+      return res.data;
+    } catch {
+      return null;
+    }
+  };
+
+  const fetchProcessingJob = async (id: string): Promise<ProcessingJob | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<ProcessingJob>>(`/documents/${id}/processing-job`);
       return res.data;
     } catch {
       return null;
@@ -219,12 +244,24 @@ export const documentsService = () => {
     file: File,
     name?: string,
     categoryId?: string,
+    options: {
+      folderId?: string;
+      folderPath?: string;
+      folderColor?: string;
+      folderCategoryIds?: string[];
+    } = {},
   ): Promise<Document | null> => {
     const { $api } = useNuxtApp();
     const formData = new FormData();
     formData.append("file", file);
     if (name) formData.append("name", name);
     if (categoryId) formData.append("category_id", categoryId);
+    if (options.folderId) formData.append("folder_id", options.folderId);
+    if (options.folderPath) formData.append("folder_path", options.folderPath);
+    if (options.folderColor) formData.append("folder_color", options.folderColor);
+    if (options.folderCategoryIds?.length) {
+      formData.append("folder_category_ids", JSON.stringify(options.folderCategoryIds));
+    }
     try {
       const res = await $api<ApiResponse<Document>>("/documents", {
         method: "POST",
@@ -279,6 +316,7 @@ export const documentsService = () => {
     error,
     fetchDocuments,
     fetchDocument,
+    fetchFolders,
     fetchVersions,
     fetchContributors,
     fetchHistory,
@@ -288,6 +326,7 @@ export const documentsService = () => {
     createRoute,
     decideRoute,
     fetchOCR,
+    fetchProcessingJob,
     redoOCR,
     download,
     archive,

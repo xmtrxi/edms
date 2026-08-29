@@ -46,6 +46,65 @@ export interface AuthResponse {
   user: User;
 }
 
+// ── Administration & forms ─────────────────────────────────────────────────
+
+export interface Role {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  protected: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormField {
+  id: string;
+  label: string;
+  type: "text" | "textarea" | "number" | "currency" | "date" | "select" | "checkbox" | "file";
+  required?: boolean;
+  options?: string[];
+}
+
+export interface ApprovalStepDefinition {
+  name: string;
+  completion_rule: "any_one" | "everyone";
+  user_ids?: string[];
+  department_ids?: string[];
+}
+
+export interface FormDefinition {
+  allowed_department_ids: string[];
+  fields: FormField[];
+  approval_steps: ApprovalStepDefinition[];
+}
+
+export interface FormTemplate {
+  id: string;
+  department_id: string;
+  name: string;
+  description?: string;
+  status: "draft" | "published" | "archived";
+  version: number;
+  definition: FormDefinition;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  template_id: string;
+  template_version: number;
+  department_id: string;
+  submitted_by: string;
+  status: "awaiting_approval" | "returned" | "approved" | "rejected";
+  values: Record<string, unknown>;
+  definition: FormDefinition;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── Documents ───────────────────────────────────────────────────────────────
 
 export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed" | "archived";
@@ -59,6 +118,7 @@ export interface DocumentOwner {
 export interface OCRResponse {
   document_id: string;
   text: string;
+  markdown: string;
   language: string;
   pages: number;
   metadata: Record<string, unknown>;
@@ -66,10 +126,28 @@ export interface OCRResponse {
   updated_at: string;
 }
 
+export interface ProcessingJob {
+  id: string;
+  document_id: string;
+  type: string;
+  status: "queued" | "running" | "completed" | "failed";
+  attempts: number;
+  last_error?: string;
+  external_id?: string;
+  result?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
 export interface Document {
   id: string;
   name: string;
   original_name: string;
+  folder_id?: string;
+  folder_path?: string;
+  folder_color?: string;
+  folder_category_ids?: string[];
   mime_type: string;
   size: number;
   status: DocumentStatus;
@@ -82,6 +160,22 @@ export interface Document {
   category?: Category;
   current_version_id?: string;
   version_count: number;
+}
+
+export interface DocumentFolder {
+  path: string;
+  name: string;
+  parent_path?: string;
+  color?: string;
+  category_ids?: string[];
+  categories?: Category[];
+  count: number;
+  size: number;
+  updated_at: string;
+}
+
+export interface SearchResultDocument extends Document {
+  snippet?: string;
 }
 
 export type DocumentVersionSource =
@@ -242,8 +336,64 @@ export interface ListDocumentsParams {
   q?: string;
   status?: string;
   category_id?: string;
+  folder_path?: string;
+  folder_id?: string;
   page?: number;
   page_size?: number;
+}
+
+export interface ManagedFolder {
+  id: string;
+  parent_id?: string;
+  ancestor_ids?: string[];
+  depth: number;
+  name: string;
+  description?: string;
+  color?: string;
+  inherit_permissions: boolean;
+  document_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FolderInput {
+  name: string;
+  parent_id?: string;
+  description?: string;
+  color?: string;
+  inherit_permissions?: boolean;
+}
+
+export type FolderRole = "manager" | "editor" | "contributor" | "viewer" | "uploader";
+
+export interface FolderGrant {
+  id: string;
+  folder_id: string;
+  principal_type: "user" | "department";
+  principal_id: string;
+  role: FolderRole;
+  allow?: string[];
+  deny?: string[];
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FolderGrantInput {
+  principal_type: "user" | "department";
+  principal_id: string;
+  role: FolderRole;
+  allow?: string[];
+  deny?: string[];
+}
+
+export interface Department {
+  id: string;
+  name: string;
+  description?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── Health ──────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@
     ClockIcon,
     UsersIcon,
     WorkflowIcon,
+    ClipboardListIcon,
     SparklesIcon,
     CloudIcon,
     ArchiveIcon,
@@ -70,6 +71,8 @@
   ]);
 
   const admin = ref<NavItem[]>([
+    { title: "Folders", url: "/admin/folders", icon: FolderOpenIcon },
+    { title: "Access control", url: "/admin/access", icon: ShieldCheckIcon },
     { title: "Users & Permissions", url: "/users", icon: ShieldCheckIcon },
     { title: "Audit Log", url: "/audit", icon: HistoryIcon },
   ]);
@@ -79,6 +82,7 @@
     { title: "Office Desk", url: "/office", icon: Building2Icon },
     { title: "Categories", url: "/categories", icon: TagIcon },
     { title: "Workflows", url: "/workflows", icon: WorkflowIcon },
+    { title: "Forms", url: "/forms", icon: ClipboardListIcon },
     { title: "AI Insights", url: "/ai-insights", icon: SparklesIcon },
     { title: "SharePoint", url: "/sharepoint", icon: CloudIcon },
   ]);
