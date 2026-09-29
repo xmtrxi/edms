@@ -151,12 +151,13 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 		_ = s.storage.Delete(ctx, storagePath)
 		return nil, false, fmt.Errorf("create document record: %w", err)
 	}
-	if _, err := createInitialVersion(ctx, s.DB, created, in.OwnerID, database.VersionSourceUpload); err != nil {
+	version, err := createInitialVersion(ctx, s.DB, created, in.OwnerID, database.VersionSourceUpload)
+	if err != nil {
 		_ = s.storage.Delete(ctx, storagePath)
 		return nil, false, fmt.Errorf("create initial document version: %w", err)
 	}
 
-	s.stageOCR(ctx, created, storagePath)
+	s.stageOCR(ctx, created, version)
 
 	return created, false, nil
 }
@@ -216,7 +217,11 @@ func (s *DocumentService) Folders(ctx context.Context, ownerID string) ([]dto.Fo
 	return folders, nil
 }
 
-func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, storagePath string) {
+func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, version *database.DocumentVersion) {
+	if version == nil {
+		s.log.Error("stage ocr without a document version", "document_id", doc.ID)
+		return
+	}
 	job := &database.ProcessingJob{
 		DocumentID: string(doc.ID),
 		Type:       "docling_ocr",
@@ -224,7 +229,8 @@ func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, 
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
-	if _, err := surrealdb.Create[database.ProcessingJob](ctx, s.DB, "processing_jobs", job); err != nil {
+	createdJob, err := surrealdb.Create[database.ProcessingJob](ctx, s.DB, "processing_jobs", job)
+	if err != nil {
 		s.log.Error("create processing job", "error", err, "document_id", doc.ID)
 	}
 
@@ -233,8 +239,9 @@ func (s *DocumentService) stageOCR(ctx context.Context, doc *database.Document, 
 		return
 	}
 	if err := s.queue.Enqueue(ctx, queue.TaskOCR, queue.OCRPayload{
-		DocumentID:  string(doc.ID),
-		StoragePath: storagePath,
+		DocumentID: string(doc.ID), StoragePath: version.StoragePath,
+		VersionID: string(version.ID), Checksum: version.Checksum,
+		GenerationID: newDocumentID(), JobID: processingJobID(createdJob),
 	}); err != nil {
 		s.log.Error("enqueue ocr task", "error", err, "document_id", doc.ID)
 	}
@@ -258,8 +265,26 @@ func (s *DocumentService) ReOCR(ctx context.Context, ownerID, id string) (*datab
 		})
 	}
 
-	s.stageOCR(ctx, doc, doc.StoragePath)
+	versionRID, err := database.ParseRecordID(doc.CurrentVersionID)
+	if err != nil {
+		return nil, err
+	}
+	version, err := surrealdb.Select[database.DocumentVersion](ctx, s.DB, versionRID)
+	if err != nil {
+		return nil, err
+	}
+	if version == nil {
+		return nil, ErrVersionNotFound
+	}
+	s.stageOCR(ctx, doc, version)
 	return doc, nil
+}
+
+func processingJobID(job *database.ProcessingJob) string {
+	if job == nil {
+		return ""
+	}
+	return string(job.ID)
 }
 
 // LatestProcessingJob returns the most recent OCR job after confirming the
@@ -375,7 +400,7 @@ func (s *DocumentService) Download(ctx context.Context, ownerID, id string) (*da
 }
 
 func (s *DocumentService) Delete(ctx context.Context, ownerID, id string) error {
-	doc, err := s.GetFor(ctx, ownerID, "delete", id)
+	_, err := s.GetFor(ctx, ownerID, "delete", id)
 	if err != nil {
 		return err
 	}
@@ -389,13 +414,6 @@ func (s *DocumentService) Delete(ctx context.Context, ownerID, id string) error 
 	}); err != nil {
 		return err
 	}
-	if err := s.storage.Delete(ctx, doc.StoragePath); err != nil {
-		s.log.Warn("delete file", "error", err, "path", doc.StoragePath)
-	}
-	if s.search != nil {
-		if err := s.search.DeleteDocument(ctx, id); err != nil {
-			s.log.Warn("remove document from index", "error", err, "document_id", id)
-		}
-	}
+	_ = writeAudit(ctx, s.DB, ownerID, "document.archived", "document", id, nil)
 	return nil
 }

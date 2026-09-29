@@ -89,6 +89,31 @@ export const administrationService = () => {
       return null;
     }
   };
+  const members = async (departmentId: string) => {
+    const { $api } = useNuxtApp();
+    try {
+      const response = await $api<
+        ApiResponse<Array<{ id: string; user_id: string; role: string }>>
+      >(`/admin/departments/${departmentId}/members`);
+      return response.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return [];
+    }
+  };
+  const addMember = async (departmentId: string, userId: string) => {
+    const { $api } = useNuxtApp();
+    try {
+      await $api(`/admin/departments/${departmentId}/members`, {
+        method: "POST",
+        body: { user_id: userId },
+      });
+      return true;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return false;
+    }
+  };
   return {
     departments,
     roles,
@@ -101,5 +126,7 @@ export const administrationService = () => {
     setPermissions,
     assignRole,
     invite,
+    members,
+    addMember,
   };
 };

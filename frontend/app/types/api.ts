@@ -105,9 +105,94 @@ export interface FormSubmission {
   updated_at: string;
 }
 
+export interface FormComment {
+  id: string;
+  submission_id: string;
+  author_id: string;
+  body: string;
+  created_at: string;
+}
+
+export interface FormApprovalStep {
+  id: string;
+  submission_id: string;
+  sequence: number;
+  name: string;
+  completion_rule: "any_one" | "everyone";
+  status: "pending" | "active" | "approved";
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface FormApprovalAssignee {
+  id: string;
+  step_id: string;
+  user_id: string;
+  department_id?: string;
+  status: "pending" | "approve" | "reject" | "return";
+  decided_at?: string;
+}
+
+export interface FormSubmissionDocument {
+  id: string;
+  submission_id: string;
+  document_id: string;
+  created_at: string;
+}
+
+export interface FormSubmissionDetail {
+  submission: FormSubmission;
+  steps: FormApprovalStep[];
+  assignees: FormApprovalAssignee[];
+  comments: FormComment[];
+  documents: FormSubmissionDocument[];
+}
+
+export interface VisitorRequest {
+  id: string;
+  template_id: string;
+  department_id: string;
+  visitor_name: string;
+  visitor_email: string;
+  submission_id?: string;
+  status: "awaiting_visitor" | "submitted" | "revoked";
+  expires_at: string;
+  created_at: string;
+}
+
+export interface VisitorRequestCreated {
+  request: VisitorRequest;
+  access_code: string;
+  public_url: string;
+}
+
+export interface VisitorApprovalStep {
+  id: string;
+  submission_id: string;
+  sequence: number;
+  name: string;
+  completion_rule: "any_one" | "everyone";
+  status: "pending" | "active" | "approved";
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface VisitorPortal {
+  request: VisitorRequest;
+  template: FormTemplate;
+  submission?: FormSubmission;
+  steps: VisitorApprovalStep[];
+}
+
 // ── Documents ───────────────────────────────────────────────────────────────
 
-export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed" | "archived";
+export type DocumentStatus =
+  | "uploaded"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "archived"
+  | "trashed";
 
 export interface DocumentOwner {
   id: string;
@@ -162,6 +247,38 @@ export interface Document {
   version_count: number;
 }
 
+export interface DashboardOverview {
+  total_documents: number;
+  ready_documents: number;
+  pending_forms: number;
+  active_workflows: number;
+  visitor_requests: number;
+  recent_documents: Document[];
+  recent_submissions: FormSubmission[];
+}
+
+export interface DocumentShare {
+  id: string;
+  document_id: string;
+  shared_with_user_id?: string;
+  shared_with_email: string;
+  permission: "view" | "download";
+  expires_at: string;
+  revoked_at?: string;
+  created_at: string;
+}
+
+export interface AIJob {
+  id: string;
+  kind: "classify" | "ask" | "summarize" | "extract";
+  status: "running" | "completed" | "failed";
+  document_ids: string[];
+  result?: Record<string, unknown>;
+  error?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
 export interface DocumentFolder {
   path: string;
   name: string;
@@ -176,6 +293,12 @@ export interface DocumentFolder {
 
 export interface SearchResultDocument extends Document {
   snippet?: string;
+  version_id?: string;
+  chunk_index: number;
+  headings?: string[];
+  page_numbers?: number[];
+  page_start?: number;
+  page_end?: number;
 }
 
 export type DocumentVersionSource =
@@ -340,6 +463,8 @@ export interface ListDocumentsParams {
   folder_id?: string;
   page?: number;
   page_size?: number;
+  mode?: "documents" | "passages";
+  document_id?: string;
 }
 
 export interface ManagedFolder {

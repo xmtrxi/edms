@@ -177,10 +177,11 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 	if err != nil {
 		return false, fmt.Errorf("create document record: %w", err)
 	}
-	if _, err := createInitialVersion(ctx, s.DB, created, ownerID, database.VersionSourceStorageSync); err != nil {
+	version, err := createInitialVersion(ctx, s.DB, created, ownerID, database.VersionSourceStorageSync)
+	if err != nil {
 		return false, fmt.Errorf("create initial document version: %w", err)
 	}
-	s.stageOCR(ctx, created, storagePath)
+	s.stageOCR(ctx, created, version)
 	return true, nil
 }
 

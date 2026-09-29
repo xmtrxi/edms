@@ -23,6 +23,10 @@ func TestWithoutEmbeddedDataImages(t *testing.T) {
 			input: "![Diagram](https://example.com/diagram.png)",
 			want:  "![Diagram](https://example.com/diagram.png)",
 		},
+		"docling image placeholder": {
+			input: "Before\n\n<!-- image -->\n\nAfter",
+			want:  "Before\n\nAfter",
+		},
 	}
 
 	for name, tt := range tests {

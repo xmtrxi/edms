@@ -10,10 +10,11 @@ import (
 type Tasks struct {
 	ocr    *service.OCRService
 	search *service.SearchService
+	email  *service.OperationsService
 	cfg    config.Config
 	log    *slog.Logger
 }
 
-func New(cfg config.Config, ocr *service.OCRService, search *service.SearchService, logger *slog.Logger) *Tasks {
-	return &Tasks{ocr: ocr, search: search, cfg: cfg, log: logger}
+func New(cfg config.Config, ocr *service.OCRService, search *service.SearchService, email *service.OperationsService, logger *slog.Logger) *Tasks {
+	return &Tasks{ocr: ocr, search: search, email: email, cfg: cfg, log: logger}
 }

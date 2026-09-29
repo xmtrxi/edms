@@ -44,7 +44,7 @@ edms/
 ```bash
 cd backend
 go mod download
-go run ./cmd/server        # Start the server
+go run ./cmd/api           # Start the server
 ```
 
 ### Frontend
@@ -113,3 +113,7 @@ gofmt -l backend/ && cd frontend && pnpm fmt:check && pnpm lint
 3. Run linters: `pnpm lint` (in `frontend/`)
 4. Run tests: `go test ./...` (in `backend/`)
 5. Commit
+
+## Integration status
+
+See [INTEGRATION_STATUS.md](INTEGRATION_STATUS.md) for the implemented visitor workflow, current frontend/backend integration coverage, deployment requirements, and the remaining mock-backed or infrastructure-dependent work.

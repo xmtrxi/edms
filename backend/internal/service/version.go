@@ -148,7 +148,8 @@ func (s *VersionService) Restore(ctx context.Context, ownerID, documentID, versi
 	rid, _ := database.ParseRecordID(documentID)
 	_, err = surrealdb.Merge[database.Document](ctx, s.DB, rid, map[string]any{
 		"current_version_id": string(version.ID), "version_count": next, "storage_path": path,
-		"mime_type": base.MimeType, "size": base.Size, "checksum": base.Checksum, "updated_at": time.Now().UTC(),
+		"mime_type": base.MimeType, "size": base.Size, "checksum": base.Checksum,
+		"status": database.DocumentStatusUploaded, "updated_at": time.Now().UTC(),
 	})
 	if err != nil {
 		return nil, err
@@ -156,6 +157,10 @@ func (s *VersionService) Restore(ctx context.Context, ownerID, documentID, versi
 	_ = writeAudit(ctx, s.DB, ownerID, "version.restored", "document", documentID, map[string]any{
 		"document_version_id": string(version.ID), "restored_from_version_id": string(base.ID), "summary": summary,
 	})
+	doc.CurrentVersionID = string(version.ID)
+	doc.StoragePath = path
+	doc.Checksum = base.Checksum
+	s.docs.stageOCR(ctx, doc, version)
 	return version, nil
 }
 

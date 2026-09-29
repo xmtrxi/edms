@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/hibiken/asynq"
+	"github.com/surrealdb/surrealdb.go"
 
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/queue"
@@ -15,16 +16,17 @@ type Server struct {
 	mux   *asynq.ServeMux
 }
 
-func NewServer(cfg config.Config, ocr *service.OCRService, search *service.SearchService, logger *slog.Logger) (*Server, error) {
+func NewServer(cfg config.Config, db *surrealdb.DB, ocr *service.OCRService, search *service.SearchService, logger *slog.Logger) (*Server, error) {
 	opts, err := queue.RedisOptions(cfg.Queue.RedisURL)
 	if err != nil {
 		return nil, err
 	}
 
-	t := New(cfg, ocr, search, logger)
+	t := New(cfg, ocr, search, service.NewOperationsService(db, cfg.SMTP), logger)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(queue.TaskOCR, t.OCRDocument)
 	mux.HandleFunc(queue.TaskReindex, t.Reindex)
+	mux.HandleFunc(queue.TaskEmail, t.DeliverEmail)
 
 	inner := asynq.NewServer(opts, asynq.Config{
 		Concurrency: cfg.Queue.Concurrency,

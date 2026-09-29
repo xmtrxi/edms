@@ -19,6 +19,7 @@
     ShieldCheckIcon,
     HistoryIcon,
   } from "@lucide/vue";
+  import { onMounted, shallowRef } from "vue";
   import { useRoute } from "vue-router";
 
   import { NuxtLink } from "#components";
@@ -37,23 +38,19 @@
     SidebarFooter,
     useSidebar,
   } from "@/components/ui/sidebar";
-  import { workflows, insights } from "@/data/mock-data";
-  import { useOfficeState } from "@/lib/office-store";
+  import type { DashboardOverview } from "@/types/api";
 
   const route = useRoute();
   const { state } = useSidebar();
   const collapsed = computed(() => state.value === "collapsed");
   const isActive = (url: string) => (url === "/" ? route.path === "/" : route.path.startsWith(url));
-  const office = useOfficeState();
-
-  const pendingSlips = computed(
-    () =>
-      office.value.slips.filter((s) => s.status === "pending" || s.status === "in_review").length,
-  );
-  const activeWorkflows = computed(
-    () => workflows.filter((w) => w.status === "pending" || w.status === "in_review").length,
-  );
-  const totalInsights = computed(() => insights.length);
+  const auth = useAuthStore();
+  const workspace = workspaceService();
+  const overview = shallowRef<DashboardOverview | null>(null);
+  const activeWorkflows = computed(() => overview.value?.active_workflows ?? 0);
+  onMounted(async () => {
+    overview.value = await workspace.overview();
+  });
 
   interface NavItem {
     title: string;
@@ -105,7 +102,7 @@
         </div>
         <div v-if="!collapsed" class="flex flex-col leading-tight">
           <span class="text-sm font-semibold tracking-tight">Lumen DMS</span>
-          <span class="text-muted-foreground text-[11px]">Contoso · Enterprise</span>
+          <span class="text-muted-foreground text-[11px]">Office records</span>
         </div>
       </div>
     </SidebarHeader>
@@ -160,26 +157,11 @@
                   <component :is="item.icon" class="h-4 w-4 shrink-0" />
                   <span v-if="!collapsed" class="truncate">{{ item.title }}</span>
                   <Badge
-                    v-if="
-                      !collapsed &&
-                      (item.title === 'Office Desk'
-                        ? pendingSlips
-                        : item.title === 'Workflows'
-                          ? activeWorkflows
-                          : item.title === 'AI Insights'
-                            ? totalInsights
-                            : null)
-                    "
+                    v-if="!collapsed && (item.title === 'Workflows' ? activeWorkflows : null)"
                     variant="secondary"
                     class="bg-primary/10 text-primary ml-auto h-5 border-0 px-1.5 text-[10px] font-medium"
                   >
-                    {{
-                      item.title === "Office Desk"
-                        ? pendingSlips
-                        : item.title === "Workflows"
-                          ? activeWorkflows
-                          : totalInsights
-                    }}
+                    {{ item.title === "Workflows" ? activeWorkflows : null }}
                   </Badge>
                 </NuxtLink>
               </SidebarMenuButton>
@@ -247,11 +229,15 @@
     <SidebarFooter class="border-sidebar-border/60 border-t">
       <div class="flex items-center gap-2.5 px-1.5 py-1.5">
         <Avatar class="h-8 w-8">
-          <AvatarFallback class="bg-primary/10 text-primary text-xs font-medium">AT</AvatarFallback>
+          <AvatarFallback class="bg-primary/10 text-primary text-xs font-medium">{{
+            auth.user?.name?.slice(0, 2).toUpperCase() || "ED"
+          }}</AvatarFallback>
         </Avatar>
         <div v-if="!collapsed" class="flex flex-col overflow-hidden leading-tight">
-          <span class="truncate text-sm font-medium">Aiko Tanaka</span>
-          <span class="text-muted-foreground truncate text-[11px]">aiko@contoso.com</span>
+          <span class="truncate text-sm font-medium">{{ auth.user?.name || "Office user" }}</span>
+          <span class="text-muted-foreground truncate text-[11px]">{{
+            auth.user?.email || ""
+          }}</span>
         </div>
       </div>
     </SidebarFooter>

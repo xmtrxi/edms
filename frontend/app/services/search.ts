@@ -39,5 +39,13 @@ export const searchService = () => {
     }
   };
 
-  return { results, meta, loading, error, search, reindex };
+  const passages = async (q: string, documentId: string): Promise<SearchResultDocument[]> => {
+    const { $api } = useNuxtApp();
+    const res = await $api<ApiResponse<SearchResultDocument[]>>("/search", {
+      query: { q, mode: "passages", document_id: documentId, page: 1, page_size: 50 },
+    });
+    return res.data;
+  };
+
+  return { results, meta, loading, error, search, passages, reindex };
 };

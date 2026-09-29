@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -44,14 +45,29 @@ func (h *SearchHandler) search(c *echo.Context) error {
 	}
 
 	page, pageSize := parsePageParams(c)
+	mode := strings.ToLower(strings.TrimSpace(c.QueryParam("mode")))
+	if mode == "" {
+		mode = "documents"
+	}
+	if mode != "documents" && mode != "passages" {
+		return respondError(c, http.StatusBadRequest, "search mode must be documents or passages")
+	}
 	result, err := h.service.Search(c.Request().Context(), service.SearchInput{
-		Query:    query,
-		OwnerID:  string(user.ID),
-		Status:   c.QueryParam("status"),
-		Page:     page,
-		PageSize: pageSize,
+		Query:      query,
+		OwnerID:    string(user.ID),
+		Status:     c.QueryParam("status"),
+		Mode:       mode,
+		DocumentID: strings.TrimSpace(c.QueryParam("document_id")),
+		Page:       page,
+		PageSize:   pageSize,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrAccessDenied) {
+			return respondError(c, http.StatusForbidden, "forbidden")
+		}
+		if errors.Is(err, service.ErrDocumentNotFound) {
+			return respondError(c, http.StatusNotFound, "document not found")
+		}
 		h.log.Error("search failed", "error", err, "query", query, "user_id", user.ID)
 		return respondError(c, http.StatusInternalServerError, "search failed")
 	}
@@ -59,8 +75,10 @@ func (h *SearchHandler) search(c *echo.Context) error {
 	items := make([]dto.SearchResultResponse, 0, len(result.Items))
 	for i := range result.Items {
 		item := result.Items[i]
-		response := dto.NewSearchResultResponse(&item.Document, item.Snippet)
-		response.DocumentResponse = response.DocumentResponse.WithOwner(user)
+		response := dto.NewSearchResultResponse(&item.Document, item.Snippet, item.Passage.VersionID, item.Passage.ChunkIndex, item.Passage.Headings, item.Passage.PageNumbers, item.Passage.PageStart, item.Passage.PageEnd)
+		if item.Document.OwnerID == string(user.ID) {
+			response.DocumentResponse = response.DocumentResponse.WithOwner(user)
+		}
 		items = append(items, response)
 	}
 

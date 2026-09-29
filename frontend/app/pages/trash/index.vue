@@ -1,6 +1,8 @@
 <script setup lang="ts">
-  import DocumentExplorer from "@/components/documents/DocumentExplorer.vue";
-  import { documents } from "@/data/mock-data";
+  import { onMounted, shallowRef } from "vue";
+  import { toast } from "vue-sonner";
+
+  import type { Document } from "@/types/api";
 
   definePageMeta({
     title: "Trash",
@@ -8,17 +10,30 @@
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Trash" }],
   });
 
-  useHead({
-    title: "Trash — Lumen DMS",
-    meta: [{ name: "description", content: "Deleted documents, recoverable for 30 days." }],
-  });
+  useHead({ title: "Trash — Lumen DMS" });
+  const workspace = workspaceService();
+  const documents = shallowRef<Document[]>([]);
+  const refresh = async () => {
+    documents.value = await workspace.trash();
+  };
+  const restore = async (id: string) => {
+    await workspace.restore(id);
+    if (!workspace.error.value) {
+      toast.success("Document restored");
+      await refresh();
+    }
+  };
+  onMounted(refresh);
 </script>
 
 <template>
-  <DocumentExplorer
-    :docs="documents.filter((d) => d.trashed)"
+  <DocumentsLiveDocumentCollection
+    :documents="documents"
+    :loading="workspace.loading.value"
+    :error="workspace.error.value"
     empty-title="Trash is empty"
-    empty-action="Browse documents"
-    empty-link="/documents"
+    mode="trash"
+    @refresh="refresh"
+    @restore="restore"
   />
 </template>

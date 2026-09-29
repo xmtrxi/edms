@@ -45,6 +45,7 @@
   } from "@/components/ui/input-group";
   import { Skeleton } from "@/components/ui/skeleton";
   import { cn } from "@/lib/utils";
+  import type { SearchResultDocument } from "@/types/api";
   import { getStatusMeta } from "@/utils/status";
 
   definePageMeta({
@@ -70,6 +71,8 @@
   const status = shallowRef("");
   const page = shallowRef(1);
   const reindexing = shallowRef(false);
+  const passagesByDocument = shallowRef<Record<string, SearchResultDocument[]>>({});
+  const passageLoading = shallowRef<Record<string, boolean>>({});
 
   const totalPages = computed(() => Math.max(1, Math.ceil((meta.value?.total ?? 0) / PAGE_SIZE)));
   const hasSearched = computed(() => !!query.value.trim());
@@ -83,11 +86,27 @@
   const load = () => {
     const q = query.value.trim();
     if (!q) return;
+    passagesByDocument.value = {};
     svc.search(q, {
       status: status.value || undefined,
       page: page.value,
       page_size: PAGE_SIZE,
     });
+  };
+
+  const loadPassages = async (documentId: string): Promise<void> => {
+    if (passagesByDocument.value[documentId] || passageLoading.value[documentId]) return;
+    const passageQuery = query.value.trim();
+    passageLoading.value = { ...passageLoading.value, [documentId]: true };
+    try {
+      const passages = await svc.passages(passageQuery, documentId);
+      if (query.value.trim() !== passageQuery) return;
+      passagesByDocument.value = { ...passagesByDocument.value, [documentId]: passages };
+    } catch {
+      toast.error("Could not load matching passages");
+    } finally {
+      passageLoading.value = { ...passageLoading.value, [documentId]: false };
+    }
   };
 
   watch(query, (_value, _oldValue, onCleanup) => {
@@ -294,7 +313,15 @@
       </div>
 
       <div class="space-y-2.5">
-        <SearchResultCard v-for="d in results" :key="d.id" :document="d" @open="openDocument" />
+        <SearchResultCard
+          v-for="d in results"
+          :key="`${d.id}-${query.trim()}`"
+          :document="d"
+          :passages="passagesByDocument[d.id]"
+          :passages-loading="passageLoading[d.id]"
+          @open="openDocument"
+          @expand="loadPassages"
+        />
       </div>
 
       <div v-if="totalPages > 1" class="mt-6 flex items-center justify-center gap-1">

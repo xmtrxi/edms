@@ -24,5 +24,10 @@ func Migrations() []surrealgoorm.Migration {
 		addFoldersAndDocumentFolderID{},
 		addAccessAndForms{},
 		makeProcessingJobCompletionOptional{},
+		addVisitorRequests{},
+		addVisitorOperations{},
+		addWorkspaceOperations{},
+		addAIJobs{},
+		addEmailDelivery{},
 	}
 }

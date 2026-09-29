@@ -25,10 +25,36 @@ func (h *FormsHandler) RegisterRoutes(api *echo.Group) {
 	g := api.Group("/forms", middleware.RequireAuth(h.auth))
 	g.GET("", h.templates)
 	g.POST("", h.create, middleware.RequirePermission(h.authz, "forms", "create"))
+	g.PATCH("/:id", h.update, middleware.RequirePermission(h.authz, "forms", "create"))
+	g.POST("/:id/publish", h.publish, middleware.RequirePermission(h.authz, "forms", "create"))
+	g.POST("/:id/archive", h.archive, middleware.RequirePermission(h.authz, "forms", "create"))
 	g.POST("/:id/submissions", h.submit)
 	g.GET("/submissions/mine", h.submissions)
+	g.GET("/submissions/pending", h.pending)
+	g.GET("/submissions/:id", h.submission)
+	g.GET("/submissions/:id/comments", h.comments)
 	g.POST("/submissions/:id/comments", h.comment)
 	g.POST("/submissions/:id/decision", h.decide)
+}
+func (h *FormsHandler) update(c *echo.Context) error {
+	var input service.FormTemplateInput
+	if err := bind(c, &input); err != nil {
+		return err
+	}
+	item, err := h.forms.UpdateTemplate(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id"), input)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(item))
+}
+func (h *FormsHandler) publish(c *echo.Context) error { return h.setStatus(c, "published") }
+func (h *FormsHandler) archive(c *echo.Context) error { return h.setStatus(c, "archived") }
+func (h *FormsHandler) setStatus(c *echo.Context, status string) error {
+	item, err := h.forms.SetTemplateStatus(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id"), status)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(item))
 }
 func (h *FormsHandler) templates(c *echo.Context) error {
 	items, e := h.forms.Templates(c.Request().Context())
@@ -65,6 +91,27 @@ func (h *FormsHandler) submissions(c *echo.Context) error {
 		return respondError(c, 500, "failed to list submissions")
 	}
 	return respondJSON(c, 200, dto.List(items, int64(len(items)), 1, len(items)))
+}
+func (h *FormsHandler) pending(c *echo.Context) error {
+	items, err := h.forms.Pending(c.Request().Context(), string(middleware.CurrentUser(c).ID))
+	if err != nil {
+		return respondError(c, 500, "failed to list pending submissions")
+	}
+	return respondJSON(c, 200, dto.List(items, int64(len(items)), 1, len(items)))
+}
+func (h *FormsHandler) submission(c *echo.Context) error {
+	item, err := h.forms.Submission(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id"))
+	if err != nil {
+		return respondError(c, 404, err.Error())
+	}
+	return respondJSON(c, 200, dto.OK(item))
+}
+func (h *FormsHandler) comments(c *echo.Context) error {
+	items, err := h.forms.Comments(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id"))
+	if err != nil {
+		return respondError(c, 400, err.Error())
+	}
+	return respondJSON(c, 200, dto.OK(items))
 }
 func (h *FormsHandler) comment(c *echo.Context) error {
 	var r struct {

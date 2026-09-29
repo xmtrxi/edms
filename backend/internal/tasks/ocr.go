@@ -14,5 +14,5 @@ func (t Tasks) OCRDocument(ctx context.Context, task *asynq.Task) error {
 	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
 		return err
 	}
-	return t.ocr.ProcessOCR(ctx, payload.DocumentID, payload.StoragePath)
+	return t.ocr.ProcessOCR(ctx, payload.DocumentID, payload.StoragePath, payload.VersionID, payload.Checksum, payload.GenerationID, payload.JobID)
 }

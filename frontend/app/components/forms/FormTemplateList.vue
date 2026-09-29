@@ -7,7 +7,11 @@
   import type { FormTemplate } from "@/types/api";
 
   const props = defineProps<{ templates: FormTemplate[]; departments: Map<string, string> }>();
-  const emit = defineEmits<{ select: [template: FormTemplate] }>();
+  const emit = defineEmits<{
+    select: [template: FormTemplate];
+    publish: [template: FormTemplate];
+    archive: [template: FormTemplate];
+  }>();
   const departmentName = (id: string) => props.departments.get(id) ?? "Department";
 </script>
 
@@ -37,9 +41,28 @@
           <FileTextIcon class="h-3.5 w-3.5" />{{ template.definition.fields.length }} fields ·
           {{ departmentName(template.department_id) }}
         </div>
-        <Button class="mt-4 w-full" variant="secondary" size="sm" @click="emit('select', template)"
-          >Open form</Button
-        >
+        <div class="mt-4 flex gap-2">
+          <Button
+            v-if="template.status === 'draft'"
+            class="flex-1"
+            size="sm"
+            @click="emit('publish', template)"
+            >Publish form</Button
+          ><Button
+            v-else
+            class="flex-1"
+            variant="secondary"
+            size="sm"
+            @click="emit('select', template)"
+            >Invite visitor</Button
+          ><Button
+            v-if="template.status === 'published'"
+            variant="ghost"
+            size="sm"
+            @click="emit('archive', template)"
+            >Archive</Button
+          >
+        </div>
       </CardContent>
     </Card>
   </div>

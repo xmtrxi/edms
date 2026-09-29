@@ -2,11 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -27,11 +26,12 @@ type SearchService struct {
 	client  *surrealdb.DB
 	storage storage.Provider
 	search  *search.Client
+	access  *AccessService
 	log     *slog.Logger
 }
 
 func NewSearchService(client *surrealdb.DB, provider storage.Provider, s *search.Client, logger *slog.Logger) *SearchService {
-	return &SearchService{client: client, storage: provider, search: s, log: logger}
+	return &SearchService{client: client, storage: provider, search: s, access: NewAccessService(client), log: logger}
 }
 
 type SearchInput struct {
@@ -43,6 +43,8 @@ type SearchInput struct {
 	// DocumentIDs, when set, restricts results to these ids (used for
 	// category filtering). An empty slice means "no restriction".
 	DocumentIDs []string
+	DocumentID  string
+	Mode        string
 	Page        int
 	PageSize    int
 }
@@ -57,6 +59,16 @@ type SearchResult struct {
 type SearchItem struct {
 	Document database.Document
 	Snippet  string
+	Passage  SearchPassage
+}
+
+type SearchPassage struct {
+	VersionID   string
+	ChunkIndex  int
+	Headings    []string
+	PageNumbers []int
+	PageStart   int
+	PageEnd     int
 }
 
 func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResult, error) {
@@ -94,12 +106,32 @@ func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResu
 }
 
 func (s *SearchService) searchMeili(ctx context.Context, in SearchInput) (*SearchResult, error) {
+	folderIDs, err := s.access.ViewableFolderIDs(ctx, in.OwnerID, "view")
+	if err != nil {
+		return nil, err
+	}
+	if in.DocumentID != "" {
+		docs, err := s.documentsByIDs(ctx, []string{in.DocumentID})
+		if err != nil {
+			return nil, err
+		}
+		if len(docs) == 0 {
+			return nil, ErrDocumentNotFound
+		}
+		allowed, err := s.access.CanDocument(ctx, in.OwnerID, "view", &docs[0])
+		if err != nil || !allowed {
+			return nil, ErrAccessDenied
+		}
+	}
 	res, err := s.search.Search(ctx, search.SearchInput{
-		Query:    in.Query,
-		OwnerID:  in.OwnerID,
-		Status:   in.Status,
-		Page:     in.Page,
-		PageSize: in.PageSize,
+		Query:      in.Query,
+		UserID:     in.OwnerID,
+		FolderIDs:  folderIDs,
+		DocumentID: in.DocumentID,
+		Status:     in.Status,
+		Mode:       in.Mode,
+		Page:       in.Page,
+		PageSize:   in.PageSize,
 	})
 	if err != nil {
 		return nil, err
@@ -108,25 +140,42 @@ func (s *SearchService) searchMeili(ctx context.Context, in SearchInput) (*Searc
 	items := make([]SearchItem, 0, len(res.Hits))
 	if len(res.Hits) > 0 {
 		ids := make([]string, 0, len(res.Hits))
-		snippets := make(map[string]string, len(res.Hits))
 		for _, hit := range res.Hits {
-			ids = append(ids, hit.RecordID)
-			snippets[hit.RecordID] = hit.Snippet
+			ids = append(ids, hit.DocumentID)
 		}
 		docs, err := s.documentsByIDs(ctx, ids)
 		if err != nil {
 			return nil, err
 		}
+		byID := make(map[string]database.Document, len(docs)*2)
 		for _, doc := range docs {
-			items = append(items, SearchItem{Document: doc, Snippet: snippets[string(doc.ID)]})
+			for _, form := range documentIDForms(string(doc.ID)) {
+				byID[form] = doc
+			}
+		}
+		for _, hit := range res.Hits {
+			doc, ok := byID[hit.DocumentID]
+			if !ok {
+				continue
+			}
+			if doc.CurrentVersionID != "" && hit.VersionID != doc.CurrentVersionID {
+				continue
+			}
+			allowed, accessErr := s.access.CanDocument(ctx, in.OwnerID, "view", &doc)
+			if accessErr != nil || !allowed {
+				continue
+			}
+			items = append(items, SearchItem{Document: doc, Snippet: hit.Snippet, Passage: SearchPassage{
+				VersionID: hit.VersionID, ChunkIndex: hit.ChunkIndex, Headings: hit.Headings,
+				PageNumbers: hit.PageNumbers, PageStart: hit.PageStart, PageEnd: hit.PageEnd,
+			}})
 		}
 	}
 
 	return &SearchResult{Items: items, Total: res.TotalHits, Page: res.Page, PageSize: res.PageSize}, nil
 }
 
-// IndexDocument indexes a single document (name + extracted content) into
-// Meilisearch. No-op when search is disabled or the document has no OCR data.
+// IndexDocument rebuilds one document from its versioned chunk artifact.
 func (s *SearchService) IndexDocument(ctx context.Context, documentID string) error {
 	if s.search == nil {
 		return nil
@@ -148,32 +197,67 @@ func (s *SearchService) IndexDocument(ctx context.Context, documentID string) er
 	if err != nil {
 		return err
 	}
-	content, summary, ocrEngine, err := s.indexContent(ctx, doc, extraction)
+	chunks, err := s.chunksForIndex(ctx, doc, extraction)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(content) == "" && strings.TrimSpace(summary) == "" {
-		return nil
+	if len(chunks) == 0 {
+		return s.search.DeleteDocument(ctx, documentID)
 	}
-	metadata := maps.Clone(doc.Metadata)
-	if metadata == nil {
-		metadata = map[string]any{}
+	generationID := chunks[0].GenerationID
+	if err := s.search.IndexChunks(ctx, chunks); err != nil {
+		return err
 	}
+	return s.search.DeleteOlderGenerations(ctx, string(doc.ID), generationID)
+}
 
-	return s.search.IndexDocument(ctx, search.Document{
-		RecordID:     string(doc.ID),
-		OwnerID:      doc.OwnerID,
-		Name:         doc.Name,
-		OriginalName: doc.OriginalName,
-		MimeType:     doc.MimeType,
-		Content:      capUTF8Bytes(content, maxSearchContentBytes),
-		Summary:      summary,
-		Extension:    metadataString(metadata, "extension", strings.TrimPrefix(strings.ToLower(filepath.Ext(doc.OriginalName)), ".")),
-		OCREngine:    ocrEngine,
-		Status:       doc.Status,
-		CreatedAt:    doc.CreatedAt,
-		UpdatedAt:    time.Now().UTC(),
-	})
+func (s *SearchService) chunksForIndex(ctx context.Context, doc *database.Document, extraction *database.DocumentExtraction) ([]search.DocumentChunk, error) {
+	if extraction != nil {
+		if extractedVersion := metadataString(extraction.Metadata, "version_id", ""); extractedVersion != "" && doc.CurrentVersionID != "" && extractedVersion != doc.CurrentVersionID {
+			return nil, nil
+		}
+	}
+	path := metadataString(doc.Metadata, "ocr_chunks_path", "")
+	if path == "" && extraction != nil {
+		path = metadataString(extraction.Metadata, "chunks_path", "")
+	}
+	if path != "" && s.storage != nil {
+		reader, err := s.storage.Download(ctx, path)
+		if err == nil {
+			defer reader.Close()
+			decoder := json.NewDecoder(reader)
+			chunks := []search.DocumentChunk{}
+			for {
+				var chunk search.DocumentChunk
+				if err := decoder.Decode(&chunk); err == io.EOF {
+					break
+				} else if err != nil {
+					return nil, fmt.Errorf("decode chunk artifact: %w", err)
+				}
+				chunk.DocumentID = string(doc.ID)
+				chunk.OwnerID, chunk.FolderID, chunk.Status = doc.OwnerID, doc.FolderID, doc.Status
+				chunks = append(chunks, chunk)
+			}
+			if len(chunks) > 0 && chunks[0].VersionID == doc.CurrentVersionID {
+				return chunks, nil
+			}
+		} else {
+			s.log.Warn("read chunk artifact for indexing", "error", err, "document_id", doc.ID, "path", path)
+		}
+	}
+	content, _, _, err := s.indexContent(ctx, doc, extraction)
+	if err != nil || strings.TrimSpace(content) == "" {
+		return nil, err
+	}
+	versionID := doc.CurrentVersionID
+	if versionID == "" {
+		versionID = "legacy"
+	}
+	generationID := metadataString(doc.Metadata, "ocr_generation_id", doc.Checksum)
+	if generationID == "" {
+		generationID = "legacy"
+	}
+	return buildSearchChunks(doc, versionID, generationID, nil, content, time.Now().UTC()), nil
 }
 
 func (s *SearchService) indexContent(ctx context.Context, doc *database.Document, extraction *database.DocumentExtraction) (content, summary, engine string, err error) {
@@ -231,9 +315,9 @@ func (s *SearchService) Enabled() bool {
 	return s.search != nil
 }
 
-// ReindexAll rebuilds the search index for every document. Archived and failed
-// documents are removed from the index (pruning stale entries). Returns the
-// number of documents indexed.
+// ReindexAll builds all current-version chunks before atomically replacing the
+// live index. Search remains available from the previous generation until the
+// replacement is fully populated.
 func (s *SearchService) ReindexAll(ctx context.Context) (int, error) {
 	if s.search == nil {
 		return 0, fmt.Errorf("search is not configured")
@@ -245,18 +329,29 @@ func (s *SearchService) ReindexAll(ctx context.Context) (int, error) {
 	}
 
 	indexed := 0
+	allChunks := []search.DocumentChunk{}
 	for _, doc := range docs {
 		if doc.Status == database.DocumentStatusArchived || doc.Status == database.DocumentStatusFailed {
-			if err := s.DeleteDocument(ctx, string(doc.ID)); err != nil {
-				s.log.Warn("remove stale document from index", "error", err, "document_id", doc.ID)
-			}
 			continue
 		}
-		if err := s.IndexDocument(ctx, string(doc.ID)); err != nil {
+		extraction, err := surrealgoorm.Query[database.DocumentExtraction](s.client, "document_extractions").WhereEq("document_id", string(doc.ID)).First(ctx)
+		if err != nil {
+			s.log.Warn("load extraction for reindex", "error", err, "document_id", doc.ID)
+			continue
+		}
+		chunks, err := s.chunksForIndex(ctx, &doc, extraction)
+		if err != nil {
 			s.log.Warn("index document", "error", err, "document_id", doc.ID)
 			continue
 		}
+		if len(chunks) == 0 {
+			continue
+		}
+		allChunks = append(allChunks, chunks...)
 		indexed++
+	}
+	if err := s.search.ReplaceAll(ctx, allChunks); err != nil {
+		return 0, err
 	}
 	return indexed, nil
 }

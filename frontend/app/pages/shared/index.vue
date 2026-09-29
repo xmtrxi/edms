@@ -1,6 +1,7 @@
 <script setup lang="ts">
-  import DocumentExplorer from "@/components/documents/DocumentExplorer.vue";
-  import { documents } from "@/data/mock-data";
+  import { onMounted, shallowRef } from "vue";
+
+  import type { Document } from "@/types/api";
 
   definePageMeta({
     title: "Shared with me",
@@ -8,17 +9,21 @@
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Shared" }],
   });
 
-  useHead({
-    title: "Shared with me — Lumen DMS",
-    meta: [{ name: "description", content: "Documents shared with you by teammates." }],
-  });
+  useHead({ title: "Shared with me — Lumen DMS" });
+  const workspace = workspaceService();
+  const documents = shallowRef<Document[]>([]);
+  const refresh = async () => {
+    documents.value = await workspace.shared();
+  };
+  onMounted(refresh);
 </script>
 
 <template>
-  <DocumentExplorer
-    :docs="documents.filter((d) => d.shared)"
-    empty-title="Nothing shared with you yet"
-    empty-action="Browse documents"
-    empty-link="/documents"
+  <DocumentsLiveDocumentCollection
+    :documents="documents"
+    :loading="workspace.loading.value"
+    :error="workspace.error.value"
+    empty-title="Nothing has been shared with you"
+    @refresh="refresh"
   />
 </template>

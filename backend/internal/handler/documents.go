@@ -1,20 +1,27 @@
 package handler
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v5"
+	"github.com/surrealdb/surrealdb.go"
 
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/dto"
 	"github.com/xmtrxi/edms/internal/middleware"
 	"github.com/xmtrxi/edms/internal/service"
+	"github.com/xmtrxi/edms/internal/signing"
 )
 
 type DocumentsHandler struct {
@@ -25,10 +32,13 @@ type DocumentsHandler struct {
 	categories    *service.CategoryService
 	folderService *service.FolderService
 	access        *service.AccessService
+	db            *surrealdb.DB
+	signing       signing.Provider
+	signingSvc    *service.SigningService
 }
 
 func NewDocumentsHandler(deps Deps) *DocumentsHandler {
-	return &DocumentsHandler{
+	handler := &DocumentsHandler{
 		cfg:           deps.Cfg,
 		docs:          service.NewDocumentService(deps.Cfg, deps.Client(), deps.Storage, deps.Queue, deps.Search, deps.Logger),
 		auth:          service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
@@ -36,7 +46,13 @@ func NewDocumentsHandler(deps Deps) *DocumentsHandler {
 		categories:    service.NewCategoryService(deps.Client()),
 		folderService: service.NewFolderService(deps.Client()),
 		access:        service.NewAccessService(deps.Client()),
+		db:            deps.Client(),
 	}
+	if deps.Cfg.Signing.Enabled && deps.Cfg.Signing.Provider == "documenso" {
+		handler.signing = signing.NewDocumensoClient(deps.Cfg.Signing.DocumensoBaseURL, deps.Cfg.Signing.DocumensoAPIKey, nil)
+		handler.signingSvc = service.NewSigningService(deps.Client(), deps.Storage, handler.signing)
+	}
+	return handler
 }
 
 func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
@@ -54,7 +70,74 @@ func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
 	g.DELETE("/:id", h.delete)
 	if h.cfg.Signing.Enabled {
 		g.POST("/:id/sign", h.sign)
+		api.POST("/signing/webhook", h.signingWebhook)
 	}
+}
+
+func (h *DocumentsHandler) signingWebhook(c *echo.Context) error {
+	if h.signingSvc == nil || h.cfg.Signing.DocumensoWebhookSecret == "" {
+		return respondError(c, http.StatusServiceUnavailable, "signing webhook is not configured")
+	}
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "could not read webhook")
+	}
+	signature := c.Request().Header.Get("X-Documenso-Signature")
+	if signature == "" {
+		signature = c.Request().Header.Get("X-Signature")
+	}
+	if !validWebhookSignature(body, signature, h.cfg.Signing.DocumensoWebhookSecret) {
+		return respondError(c, http.StatusUnauthorized, "invalid webhook signature")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return respondError(c, http.StatusBadRequest, "invalid webhook payload")
+	}
+	event := strings.ToLower(firstWebhookString(payload, "event", "type", "status"))
+	if !strings.Contains(event, "complete") && !strings.Contains(event, "signed") {
+		return respondJSON(c, http.StatusAccepted, dto.WithMessage(map[string]any{}, "event ignored"))
+	}
+	providerDocumentID := firstWebhookString(payload, "provider_document_id", "document_id", "documentId", "id")
+	if providerDocumentID == "" {
+		return respondError(c, http.StatusBadRequest, "provider document id is required")
+	}
+	request, err := h.signingSvc.Complete(c.Request().Context(), providerDocumentID, firstWebhookString(payload, "download_url", "downloadUrl"))
+	if err != nil {
+		return respondError(c, http.StatusBadGateway, err.Error())
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(request))
+}
+
+func validWebhookSignature(body []byte, signature, secret string) bool {
+	signature = strings.TrimSpace(strings.TrimPrefix(signature, "sha256="))
+	provided, err := hex.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	return hmac.Equal(provided, mac.Sum(nil))
+}
+
+func firstWebhookString(payload map[string]any, keys ...string) string {
+	for _, containerKey := range []string{"data", "payload", "document"} {
+		if nested, ok := payload[containerKey].(map[string]any); ok {
+			if value := firstWebhookString(nested, keys...); value != "" {
+				return value
+			}
+		}
+	}
+	for _, key := range keys {
+		switch value := payload[key].(type) {
+		case string:
+			if strings.TrimSpace(value) != "" {
+				return strings.TrimSpace(value)
+			}
+		case float64:
+			return strconv.FormatFloat(value, 'f', -1, 64)
+		}
+	}
+	return ""
 }
 
 func (h *DocumentsHandler) list(c *echo.Context) error {
@@ -370,7 +453,38 @@ func (h *DocumentsHandler) delete(c *echo.Context) error {
 }
 
 func (h *DocumentsHandler) sign(c *echo.Context) error {
-	return respondJSON(c, http.StatusNotImplemented, dto.WithMessage(map[string]string{}, "document signing is enabled but not implemented yet"))
+	if h.signing == nil {
+		return respondError(c, http.StatusServiceUnavailable, "signing provider is not configured")
+	}
+	var input struct {
+		Title      string              `json:"title"`
+		Recipients []signing.Recipient `json:"recipients"`
+	}
+	if err := bind(c, &input); err != nil {
+		return err
+	}
+	if len(input.Recipients) == 0 {
+		return respondError(c, http.StatusBadRequest, "at least one recipient is required")
+	}
+	document, reader, err := h.docs.Download(c.Request().Context(), actor(c), c.Param("id"))
+	if err != nil {
+		return h.handleError(c, err)
+	}
+	defer reader.Close()
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		title = document.Name
+	}
+	result, err := h.signing.Create(c.Request().Context(), signing.CreateRequest{Title: title, FileName: document.Name, File: reader, Recipients: input.Recipients, ExternalID: string(document.ID)})
+	if err != nil {
+		return respondError(c, http.StatusBadGateway, err.Error())
+	}
+	now := time.Now().UTC()
+	request, err := surrealdb.Create[database.SigningRequest](c.Request().Context(), h.db, "signing_requests", &database.SigningRequest{DocumentID: string(document.ID), DocumentVersionID: document.CurrentVersionID, RequestedBy: actor(c), Provider: h.cfg.Signing.Provider, ProviderDocumentID: result.DocumentID, SigningURL: result.SigningURL, Status: database.SigningStatusSent, CreatedAt: now, UpdatedAt: now})
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "failed to save signing request")
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(request))
 }
 
 func (h *DocumentsHandler) handleError(c *echo.Context, err error) error {

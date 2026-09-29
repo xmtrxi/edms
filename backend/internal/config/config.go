@@ -73,6 +73,13 @@ type SearchConfig struct {
 	APIKey string
 	Index  string
 }
+type AIConfig struct {
+	Enabled        bool
+	BaseURL        string
+	APIKey         string
+	ChatModel      string
+	EmbeddingModel string
+}
 type Config struct {
 	App             AppConfig
 	Database        DatabaseConfig
@@ -87,6 +94,7 @@ type Config struct {
 	JWT             JWTConfig
 	SMTP            SMTPConfig
 	Search          SearchConfig
+	AI              AIConfig
 }
 
 func Load(env string) Config {
@@ -154,6 +162,13 @@ func Load(env string) Config {
 			URL:    getEnv("MEILI_URL"),
 			APIKey: getEnv("MEILI_MASTER_KEY"),
 			Index:  getEnvDefault("MEILI_INDEX", "documents"),
+		},
+		AI: AIConfig{
+			Enabled:        getEnvBool("AI_ENABLED", false),
+			BaseURL:        getEnv("AI_BASE_URL"),
+			APIKey:         getEnv("AI_API_KEY"),
+			ChatModel:      getEnv("AI_CHAT_MODEL"),
+			EmbeddingModel: getEnv("AI_EMBEDDING_MODEL"),
 		},
 	}
 }

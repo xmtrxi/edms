@@ -1,6 +1,6 @@
 module github.com/xmtrxi/edms
 
-go 1.26.4
+go 1.27
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
@@ -10,7 +10,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hibiken/asynq v0.26.0
-	github.com/kemboi22/surreal-go-orm v0.0.0-20260802193357-c7a7fd46506b
+	github.com/kemboi22/surreal-go-orm v0.0.0-20260917093316-b4651f508e9e
 	github.com/labstack/echo/v5 v5.3.1
 	github.com/meilisearch/meilisearch-go v0.36.3
 	github.com/microsoft/kiota-authentication-azure-go v1.3.1

@@ -100,7 +100,7 @@ func main() {
 	searchSvc := service.NewSearchService(db.Client(), provider, searchClient, logger)
 
 	if queueClient != nil {
-		worker, err := tasks.NewServer(cfg, ocrSvc, searchSvc, logger)
+		worker, err := tasks.NewServer(cfg, db.Client(), ocrSvc, searchSvc, logger)
 		if err != nil {
 			logger.Error("start worker", "error", err)
 			os.Exit(1)

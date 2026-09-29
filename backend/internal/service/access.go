@@ -76,6 +76,83 @@ func (s *AccessService) CanFolder(ctx context.Context, userID, capability, folde
 	}
 }
 
+// ViewableFolderIDs resolves folder scopes in bulk for search filters. It
+// mirrors CanFolder's deny/allow/role precedence and inheritance semantics,
+// without issuing one query per folder.
+func (s *AccessService) ViewableFolderIDs(ctx context.Context, userID, capability string) ([]string, error) {
+	folderResult, err := surrealdb.Query[[]database.Folder](ctx, s.DB, "SELECT * FROM folders", nil)
+	if err != nil {
+		return nil, err
+	}
+	grantResult, err := surrealdb.Query[[]database.FolderGrant](ctx, s.DB, "SELECT * FROM folder_grants", nil)
+	if err != nil {
+		return nil, err
+	}
+	departmentIDs, err := s.departmentIDs(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	folders := map[string]database.Folder{}
+	if folderResult != nil && len(*folderResult) > 0 {
+		for _, folder := range (*folderResult)[0].Result {
+			folders[string(folder.ID)] = folder
+		}
+	}
+	grants := map[string][]database.FolderGrant{}
+	if grantResult != nil && len(*grantResult) > 0 {
+		for _, grant := range (*grantResult)[0].Result {
+			if grant.PrincipalType == "user" && grant.PrincipalID == userID || grant.PrincipalType == "department" && slices.Contains(departmentIDs, grant.PrincipalID) {
+				grants[grant.FolderID] = append(grants[grant.FolderID], grant)
+			}
+		}
+	}
+	result := make([]string, 0, len(folders))
+	for id, folder := range folders {
+		if folder.OwnerID == userID || canFolderFromSnapshot(id, capability, folders, grants) {
+			result = append(result, id)
+		}
+	}
+	return result, nil
+}
+
+func canFolderFromSnapshot(folderID, capability string, folders map[string]database.Folder, grants map[string][]database.FolderGrant) bool {
+	current, ok := folders[folderID]
+	seen := map[string]bool{}
+	for ok && !seen[string(current.ID)] {
+		seen[string(current.ID)] = true
+		if decision, found := grantDecisionFromSnapshot(grants[string(current.ID)], capability); found {
+			return decision
+		}
+		if current.ParentID == "" || !current.InheritPermissions {
+			return false
+		}
+		current, ok = folders[current.ParentID]
+	}
+	return false
+}
+
+func grantDecisionFromSnapshot(grants []database.FolderGrant, capability string) (bool, bool) {
+	if len(grants) == 0 {
+		return false, false
+	}
+	for _, grant := range grants {
+		if slices.Contains(grant.Deny, capability) {
+			return false, true
+		}
+	}
+	for _, grant := range grants {
+		if slices.Contains(grant.Allow, capability) {
+			return true, true
+		}
+	}
+	for _, grant := range grants {
+		if slices.Contains(roleCapabilities[grant.Role], capability) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
 func (s *AccessService) folder(ctx context.Context, id string) (*database.Folder, error) {
 	rid, err := database.ParseRecordID(id)
 	if err != nil {

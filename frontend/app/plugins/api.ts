@@ -13,6 +13,7 @@ export default defineNuxtPlugin(() => {
       if (response.status !== 401) return;
       if (typeof window === "undefined") return;
       if (window.location.pathname.startsWith("/auth/")) return;
+      if (window.location.pathname.startsWith("/visit")) return;
       clearToken();
       navigateTo("/auth/login");
     },

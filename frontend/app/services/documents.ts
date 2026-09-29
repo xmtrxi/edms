@@ -308,6 +308,23 @@ export const documentsService = () => {
       return null;
     }
   };
+  const requestSignature = async (
+    id: string,
+    input: { title?: string; recipients: Array<{ email: string; name?: string; role?: string }> },
+  ) => {
+    const { $api } = useNuxtApp();
+    try {
+      const response = await $api<ApiResponse<Record<string, unknown>>>(`/documents/${id}/sign`, {
+        method: "POST",
+        body: input,
+      });
+      error.value = "";
+      return response.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
 
   return {
     documents,
@@ -333,5 +350,6 @@ export const documentsService = () => {
     upload,
     syncStorage,
     setCategory,
+    requestSignature,
   };
 };

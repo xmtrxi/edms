@@ -6,7 +6,9 @@
     FileTextIcon,
     HistoryIcon,
     Loader2Icon,
+    PenLineIcon,
     RefreshCwIcon,
+    Share2Icon,
   } from "@lucide/vue";
   import { useIntervalFn } from "@vueuse/core";
   import { computed, ref, watch } from "vue";
@@ -17,14 +19,18 @@
   import DocumentOcrViewer from "@/components/documents/DocumentOcrViewer.vue";
   import DocumentProcessingPanel from "@/components/documents/DocumentProcessingPanel.vue";
   import DocumentRoutingPanel from "@/components/documents/DocumentRoutingPanel.vue";
+  import DocumentShareDialog from "@/components/documents/DocumentShareDialog.vue";
+  import DocumentSignDialog from "@/components/documents/DocumentSignDialog.vue";
   import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
+  import { workspaceService } from "@/services/workspace";
   import type {
     CreateDocumentRoute,
     Document,
     DocumentContributors,
     DocumentRoute,
+    DocumentShare,
     DocumentVersion,
     ProcessingJob,
     RouteDecision,
@@ -44,6 +50,7 @@
   const router = useRouter();
 
   const service = documentsService();
+  const workspace = workspaceService();
   const docId = computed(() => route.params.id as string);
   const doc = ref<Document | null>(null);
   const versions = ref<DocumentVersion[]>([]);
@@ -57,6 +64,12 @@
   const redoingOcr = ref(false);
   const versionBusy = ref(false);
   const routeBusy = ref(false);
+  const shareOpen = ref(false);
+  const signOpen = ref(false);
+  const shareBusy = ref(false);
+  const signBusy = ref(false);
+  const documentShares = ref<DocumentShare[]>([]);
+  const createdShareToken = ref("");
 
   const load = async () => {
     loading.value = true;
@@ -176,6 +189,58 @@
       toast.error(service.error || "Could not archive document");
     }
   };
+  const openShareDialog = async () => {
+    shareOpen.value = true;
+    createdShareToken.value = "";
+    shareBusy.value = true;
+    documentShares.value = await workspace.shares(docId.value);
+    shareBusy.value = false;
+  };
+  const createShare = async (input: {
+    email: string;
+    permission: "view" | "download";
+    expires_at?: string;
+  }) => {
+    shareBusy.value = true;
+    const created = await workspace.share(docId.value, input);
+    shareBusy.value = false;
+    if (!created) {
+      toast.error(workspace.error.value || "Could not create share");
+      return;
+    }
+    documentShares.value = [created.share, ...documentShares.value];
+    createdShareToken.value = created.token;
+    toast.success("Secure share created");
+  };
+  const revokeShare = async (shareId: string) => {
+    shareBusy.value = true;
+    await workspace.revokeShare(docId.value, shareId);
+    shareBusy.value = false;
+    if (workspace.error.value) {
+      toast.error(workspace.error.value);
+      return;
+    }
+    documentShares.value = await workspace.shares(docId.value);
+    toast.success("Share revoked");
+  };
+  const copyShareToken = async (token: string) => {
+    await navigator.clipboard.writeText(token);
+    toast.success("Share token copied");
+  };
+  const requestSignature = async (input: {
+    title: string;
+    recipients: Array<{ email: string; name: string; role: string }>;
+  }) => {
+    signBusy.value = true;
+    const request = await service.requestSignature(docId.value, input);
+    signBusy.value = false;
+    if (!request) {
+      toast.error(service.error || "Could not create signature request");
+      return;
+    }
+    signOpen.value = false;
+    toast.success("Signature request sent");
+  };
 </script>
 
 <template>
@@ -208,6 +273,12 @@
       <h2 class="min-w-0 truncate text-lg font-semibold">{{ doc.name }}</h2>
       <StatusBadges :status="doc.status" />
       <div class="ml-auto flex items-center gap-1.5">
+        <Button size="sm" variant="outline" class="gap-1.5" @click="openShareDialog">
+          <Share2Icon class="h-3.5 w-3.5" /> Share
+        </Button>
+        <Button size="sm" variant="outline" class="gap-1.5" @click="signOpen = true">
+          <PenLineIcon class="h-3.5 w-3.5" /> Sign
+        </Button>
         <Button
           size="sm"
           variant="outline"
@@ -421,4 +492,24 @@
       </div>
     </div>
   </template>
+  <DocumentShareDialog
+    v-if="doc"
+    v-model:open="shareOpen"
+    :title="doc.name"
+    :shares="documentShares"
+    :created-token="createdShareToken"
+    :busy="shareBusy"
+    :error="workspace.error.value"
+    @submit="createShare"
+    @revoke="revokeShare"
+    @copy="copyShareToken"
+  />
+  <DocumentSignDialog
+    v-if="doc"
+    v-model:open="signOpen"
+    :document-title="doc.name"
+    :busy="signBusy"
+    :error="service.error"
+    @submit="requestSignature"
+  />
 </template>

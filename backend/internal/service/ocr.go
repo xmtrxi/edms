@@ -3,7 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,7 +27,7 @@ import (
 const (
 	maxExtractionPreviewBytes = 50_000
 	maxMarkdownPreviewBytes   = 10_000
-	maxIndexContentBytes      = 150_000
+	chunkerVersion            = "docling-hybrid-v1:max_tokens=512"
 )
 
 type OCRService struct {
@@ -43,7 +43,7 @@ func NewOCRService(db *surrealdb.DB, provider storage.Provider, d *docling.Clien
 	return &OCRService{DB: db, storage: provider, docling: d, office: office, search: s, log: logger}
 }
 
-func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath string) error {
+func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath, versionID, checksum, generationID, queuedJobID string) error {
 	if s.docling == nil {
 		return fmt.Errorf("docling client is not configured")
 	}
@@ -60,11 +60,28 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 	if doc == nil {
 		return ErrDocumentNotFound
 	}
+	if versionID == "" {
+		versionID = doc.CurrentVersionID
+	}
+	if checksum == "" {
+		checksum = doc.Checksum
+	}
+	if generationID == "" {
+		generationID = newDocumentID()
+	}
+	if doc.CurrentVersionID != versionID || (checksum != "" && doc.Checksum != checksum) {
+		s.completeSupersededJob(ctx, queuedJobID, versionID)
+		return nil
+	}
 
-	jobID := ""
-	job, err := surrealgoorm.Query[database.ProcessingJob](s.DB, "processing_jobs").WhereEq("document_id", documentID).OrderBy("created_at DESC").First(ctx)
-	if err == nil && job != nil {
-		jobID = string(job.ID)
+	jobID := queuedJobID
+	if jobID == "" {
+		job, lookupErr := surrealgoorm.Query[database.ProcessingJob](s.DB, "processing_jobs").WhereEq("document_id", documentID).OrderBy("created_at DESC").First(ctx)
+		if lookupErr == nil && job != nil {
+			jobID = string(job.ID)
+		}
+	}
+	if jobID != "" {
 		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
 			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
 				"status":     database.ProcessingJobStatusRunning,
@@ -80,7 +97,7 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 
 	file, err := s.storage.Download(ctx, storagePath)
 	if err != nil {
-		s.failDocument(ctx, doc, jobID, fmt.Errorf("download original: %w", err))
+		s.failDocument(ctx, doc, jobID, versionID, fmt.Errorf("download original: %w", err))
 		return err
 	}
 	defer file.Close()
@@ -90,31 +107,31 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 	if isLegacyOffice(filename) {
 		if s.office == nil {
 			err := fmt.Errorf("legacy office document requires gotenberg conversion")
-			s.failDocument(ctx, doc, jobID, err)
+			s.failDocument(ctx, doc, jobID, versionID, err)
 			return err
 		}
 		converted, err := s.office.ConvertOfficeToPDF(ctx, filename, file)
 		if err != nil {
 			err = fmt.Errorf("legacy office convert: %w", err)
-			s.failDocument(ctx, doc, jobID, err)
+			s.failDocument(ctx, doc, jobID, versionID, err)
 			return err
 		}
 		filename = strings.TrimSuffix(filename, filepath.Ext(filename)) + ".pdf"
 		input = bytes.NewReader(converted)
 	}
 
-	opts := docling.Options{
-		ToFormats: []string{"json", "md", "text"},
-		DoOCR:     true,
-		TableMode: "accurate",
+	opts := docling.ChunkOptions{
+		Options:   docling.Options{DoOCR: true, TableMode: "accurate", ImageExportMode: "placeholder"},
+		MaxTokens: 512, MergePeers: true, UseMarkdownTables: true,
+		UseMarkdownImages: false, ImagePlaceholder: "", IncludeRawText: true,
+		IncludeConvertedDoc: true,
 		// Keep Markdown portable and readable. Embedded images are data URLs and
 		// make both the OCR preview and indexed text unusable for large documents.
-		ImageExportMode: "placeholder",
 	}
-	taskID, err := s.docling.ConvertFileAsync(ctx, filename, input, opts)
+	taskID, err := s.docling.ChunkFileAsync(ctx, filename, input, opts)
 	if err != nil {
 		err = fmt.Errorf("submit to docling: %w", err)
-		s.failDocument(ctx, doc, jobID, err)
+		s.failDocument(ctx, doc, jobID, versionID, err)
 		return err
 	}
 	if jobID != "" {
@@ -128,11 +145,19 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath str
 
 	res, err := s.waitForResult(ctx, taskID)
 	if err != nil {
-		s.failDocument(ctx, doc, jobID, err)
+		s.failDocument(ctx, doc, jobID, versionID, err)
 		return err
 	}
-	if err := s.completeDocument(ctx, doc, jobID, taskID, res); err != nil {
-		s.failDocument(ctx, doc, jobID, err)
+	fresh, err := surrealdb.Select[database.Document](ctx, s.DB, docID)
+	if err != nil {
+		return err
+	}
+	if fresh == nil || fresh.CurrentVersionID != versionID || (checksum != "" && fresh.Checksum != checksum) {
+		s.completeSupersededJob(ctx, jobID, versionID)
+		return nil
+	}
+	if err := s.completeDocument(ctx, fresh, jobID, taskID, versionID, generationID, res); err != nil {
+		s.failDocument(ctx, doc, jobID, versionID, err)
 		return err
 	}
 	return nil
@@ -199,24 +224,22 @@ func (s *OCRService) recordTaskProgress(ctx context.Context, taskID string, task
 	})
 }
 
-func (s *OCRService) completeDocument(ctx context.Context, doc *database.Document, jobID, taskID string, res *docling.ConvertResult) error {
+func (s *OCRService) completeDocument(ctx context.Context, doc *database.Document, jobID, taskID, versionID, generationID string, res *docling.ConvertResult) error {
 	now := time.Now().UTC()
 	docRID, _ := database.ParseRecordID(string(doc.ID))
-	ocrJSONPath := ocrArtifactPath(doc, "ocr.json")
-	textPath := ocrArtifactPath(doc, "extracted.txt")
-	markdownPath := ocrArtifactPath(doc, "extracted.md")
+	ocrJSONPath := versionOCRArtifactPath(doc, versionID, "ocr.json")
+	textPath := versionOCRArtifactPath(doc, versionID, "extracted.txt")
+	markdownPath := versionOCRArtifactPath(doc, versionID, "extracted.md")
+	chunksPath := versionOCRArtifactPath(doc, versionID, "chunks.jsonl")
 	searchableText := markdownutil.WithoutEmbeddedDataImages(res.TextContent)
 	searchableMarkdown := markdownutil.WithoutEmbeddedDataImages(res.MdContent)
 	textPreview := capUTF8(searchableText, maxExtractionPreviewBytes)
-	indexContent := capUTF8(searchableText, maxIndexContentBytes)
 	markdownPreview := capUTF8(searchableMarkdown, maxMarkdownPreviewBytes)
-	imagePaths, err := s.storeEmbeddedImages(ctx, doc, res.RawJSON)
+	chunks := buildSearchChunks(doc, versionID, generationID, res.Chunks, searchableText, now)
+	overview := extractiveOverview(chunks)
+	chunkArtifact, err := encodeChunksJSONL(chunks)
 	if err != nil {
-		return err
-	}
-
-	if err := deleteDocumentExtractions(ctx, s.DB, string(doc.ID)); err != nil {
-		s.log.Warn("clear old extraction", "error", err, "document_id", doc.ID)
+		return fmt.Errorf("encode chunks: %w", err)
 	}
 
 	if len(res.RawJSON) > 0 {
@@ -234,6 +257,20 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 			return fmt.Errorf("store extracted markdown: %w", err)
 		}
 	}
+	if err := s.storage.Upload(ctx, chunksPath, bytes.NewReader(chunkArtifact)); err != nil {
+		return fmt.Errorf("store chunks: %w", err)
+	}
+	current, err := s.isCurrentVersion(ctx, string(doc.ID), versionID, doc.Checksum)
+	if err != nil {
+		return err
+	}
+	if !current {
+		s.completeSupersededJob(ctx, jobID, versionID)
+		return nil
+	}
+	if err := deleteDocumentExtractions(ctx, s.DB, string(doc.ID)); err != nil {
+		s.log.Warn("clear old extraction", "error", err, "document_id", doc.ID)
+	}
 
 	if _, err := surrealdb.Create[database.DocumentExtraction](ctx, s.DB, "document_extractions", &database.DocumentExtraction{
 		DocumentID: string(doc.ID),
@@ -246,12 +283,17 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 			"ocr_json_path":    ocrJSONPath,
 			"full_text_path":   textPath,
 			"markdown_path":    markdownPath,
+			"chunks_path":      chunksPath,
+			"chunk_count":      len(chunks),
+			"chunker_version":  chunkerVersion,
+			"version_id":       versionID,
+			"generation_id":    generationID,
+			"overview":         overview,
 			"full_text_bytes":  len(searchableText),
 			"text_truncated":   len(textPreview) < len(searchableText),
 			"markdown_preview": markdownPreview,
 			"pages":            res.Pages,
 			"timings":          res.Timings,
-			"image_paths":      imagePaths,
 		},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -268,7 +310,12 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 	metadata["ocr_json_path"] = ocrJSONPath
 	metadata["ocr_text_path"] = textPath
 	metadata["ocr_markdown_path"] = markdownPath
-	metadata["ocr_image_paths"] = imagePaths
+	metadata["ocr_chunks_path"] = chunksPath
+	metadata["ocr_chunk_count"] = len(chunks)
+	metadata["ocr_chunker_version"] = chunkerVersion
+	metadata["ocr_version_id"] = versionID
+	metadata["ocr_generation_id"] = generationID
+	metadata["ocr_overview"] = overview
 
 	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, docRID, map[string]any{
 		"status":     database.DocumentStatusReady,
@@ -280,7 +327,7 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 		if jobRID, rerr := database.ParseRecordID(jobID); rerr == nil {
 			_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, jobRID, map[string]any{
 				"status":       database.ProcessingJobStatusCompleted,
-				"result":       map[string]any{"task_id": taskID, "engine": "docling", "ocr_json_path": ocrJSONPath, "full_text_path": textPath, "markdown_path": markdownPath, "image_paths": imagePaths},
+				"result":       map[string]any{"task_id": taskID, "engine": "docling", "ocr_json_path": ocrJSONPath, "full_text_path": textPath, "markdown_path": markdownPath, "chunks_path": chunksPath, "chunk_count": len(chunks), "version_id": versionID, "generation_id": generationID},
 				"completed_at": now,
 				"updated_at":   now,
 			})
@@ -288,21 +335,10 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 	}
 
 	if s.search != nil {
-		if err := s.search.IndexDocument(ctx, search.Document{
-			RecordID:     string(doc.ID),
-			OwnerID:      doc.OwnerID,
-			Name:         doc.Name,
-			OriginalName: doc.OriginalName,
-			MimeType:     doc.MimeType,
-			Content:      indexContent,
-			Summary:      capUTF8(searchableText, 600),
-			Extension:    strings.TrimPrefix(strings.ToLower(filepath.Ext(doc.OriginalName)), "."),
-			OCREngine:    "docling",
-			Status:       database.DocumentStatusReady,
-			CreatedAt:    doc.CreatedAt,
-			UpdatedAt:    now,
-		}); err != nil {
+		if err := s.search.IndexChunks(ctx, chunks); err != nil {
 			s.log.Warn("index document", "error", err, "document_id", doc.ID)
+		} else if err := s.search.DeleteOlderGenerations(ctx, string(doc.ID), generationID); err != nil {
+			s.log.Warn("remove old search generation", "error", err, "document_id", doc.ID)
 		}
 	}
 
@@ -310,63 +346,12 @@ func (s *OCRService) completeDocument(ctx context.Context, doc *database.Documen
 	return nil
 }
 
-func (s *OCRService) storeEmbeddedImages(ctx context.Context, doc *database.Document, rawJSON []byte) ([]string, error) {
-	const marker = "data:image/"
-	var paths []string
-	for offset := 0; ; {
-		start := bytes.Index(rawJSON[offset:], []byte(marker))
-		if start < 0 {
-			break
-		}
-		start += offset
-		comma := bytes.IndexByte(rawJSON[start:], ',')
-		if comma < 0 {
-			break
-		}
-		comma += start
-		header := string(rawJSON[start:comma])
-		if !strings.Contains(header, ";base64") {
-			offset = comma + 1
-			continue
-		}
-		end := comma + 1
-		for end < len(rawJSON) && (rawJSON[end] == '+' || rawJSON[end] == '/' || rawJSON[end] == '=' || rawJSON[end] == '-' || rawJSON[end] == '_' || rawJSON[end] >= 'A' && rawJSON[end] <= 'Z' || rawJSON[end] >= 'a' && rawJSON[end] <= 'z' || rawJSON[end] >= '0' && rawJSON[end] <= '9') {
-			end++
-		}
-		data, err := base64.StdEncoding.DecodeString(string(rawJSON[comma+1 : end]))
-		if err != nil {
-			return nil, fmt.Errorf("decode embedded docling image: %w", err)
-		}
-		if len(data) == 0 {
-			offset = end
-			continue
-		}
-		path := fmt.Sprintf("documents/%s/images/image-%03d.%s", documentArtifactID(doc), len(paths)+1, imageExtension(header))
-		if err := s.storage.Upload(ctx, path, bytes.NewReader(data)); err != nil {
-			return nil, fmt.Errorf("store docling image: %w", err)
-		}
-		paths = append(paths, path)
-		offset = end
+func (s *OCRService) failDocument(ctx context.Context, doc *database.Document, jobID, versionID string, cause error) {
+	current, err := s.isCurrentVersion(ctx, string(doc.ID), versionID, doc.Checksum)
+	if err == nil && !current {
+		s.completeSupersededJob(ctx, jobID, versionID)
+		return
 	}
-	return paths, nil
-}
-
-func imageExtension(header string) string {
-	typeEnd := strings.IndexByte(strings.TrimPrefix(header, "data:image/"), ';')
-	if typeEnd < 0 {
-		return "bin"
-	}
-	switch strings.ToLower(header[len("data:image/") : len("data:image/")+typeEnd]) {
-	case "jpeg", "jpg":
-		return "jpg"
-	case "png", "webp", "gif":
-		return strings.ToLower(header[len("data:image/") : len("data:image/")+typeEnd])
-	default:
-		return "bin"
-	}
-}
-
-func (s *OCRService) failDocument(ctx context.Context, doc *database.Document, jobID string, cause error) {
 	now := time.Now().UTC()
 	docRID, _ := database.ParseRecordID(string(doc.ID))
 	_, _ = surrealdb.Merge[database.Document](ctx, s.DB, docRID, map[string]any{
@@ -390,8 +375,159 @@ func (s *OCRService) failDocument(ctx context.Context, doc *database.Document, j
 	s.log.Error("document ocr failed", "document_id", doc.ID, "error", cause)
 }
 
-func ocrArtifactPath(doc *database.Document, filename string) string {
-	return "documents/" + documentArtifactID(doc) + "/" + filename
+func (s *OCRService) isCurrentVersion(ctx context.Context, documentID, versionID, checksum string) (bool, error) {
+	rid, err := database.ParseRecordID(documentID)
+	if err != nil {
+		return false, err
+	}
+	doc, err := surrealdb.Select[database.Document](ctx, s.DB, rid)
+	if err != nil || doc == nil {
+		return false, err
+	}
+	return doc.CurrentVersionID == versionID && (checksum == "" || doc.Checksum == checksum), nil
+}
+
+func (s *OCRService) completeSupersededJob(ctx context.Context, jobID, versionID string) {
+	if jobID == "" {
+		return
+	}
+	rid, err := database.ParseRecordID(jobID)
+	if err != nil {
+		return
+	}
+	now := time.Now().UTC()
+	_, _ = surrealdb.Merge[database.ProcessingJob](ctx, s.DB, rid, map[string]any{
+		"status":       database.ProcessingJobStatusCompleted,
+		"result":       map[string]any{"status": "superseded", "version_id": versionID},
+		"completed_at": now,
+		"updated_at":   now,
+	})
+}
+
+func buildSearchChunks(doc *database.Document, versionID, generationID string, source []docling.Chunk, fallbackText string, now time.Time) []search.DocumentChunk {
+	if len(source) == 0 {
+		source = fallbackChunks(fallbackText)
+	}
+	result := make([]search.DocumentChunk, 0, len(source))
+	for _, item := range source {
+		content := markdownutil.WithoutEmbeddedDataImages(item.Text)
+		if content == "" {
+			content = markdownutil.WithoutEmbeddedDataImages(item.RawText)
+		}
+		if content == "" {
+			continue
+		}
+		pages := positiveInts(item.PageNumbers)
+		pageStart, pageEnd := 0, 0
+		if len(pages) > 0 {
+			pageStart, pageEnd = pages[0], pages[0]
+			for _, page := range pages[1:] {
+				if page < pageStart {
+					pageStart = page
+				}
+				if page > pageEnd {
+					pageEnd = page
+				}
+			}
+		}
+		result = append(result, search.DocumentChunk{
+			DocumentID: string(doc.ID), VersionID: versionID, GenerationID: generationID,
+			ChunkIndex: len(result), Title: doc.Name, Filename: doc.OriginalName,
+			Headings: cleanStrings(item.Headings), PageNumbers: pages, PageStart: pageStart, PageEnd: pageEnd,
+			OwnerID: doc.OwnerID, FolderID: doc.FolderID, MimeType: doc.MimeType,
+			Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(doc.OriginalName)), "."),
+			OCREngine: "docling", Status: database.DocumentStatusReady, Content: content, UpdatedAt: now,
+		})
+	}
+	return result
+}
+
+func fallbackChunks(value string) []docling.Chunk {
+	value = markdownutil.WithoutEmbeddedDataImages(value)
+	if value == "" {
+		return nil
+	}
+	const target = 3000
+	paragraphs := strings.Split(value, "\n\n")
+	chunks := make([]docling.Chunk, 0, len(paragraphs)/3+1)
+	var current strings.Builder
+	flush := func() {
+		text := strings.TrimSpace(current.String())
+		if text != "" {
+			chunks = append(chunks, docling.Chunk{ChunkIndex: len(chunks), Text: text})
+		}
+		current.Reset()
+	}
+	for _, paragraph := range paragraphs {
+		paragraph = strings.TrimSpace(paragraph)
+		if paragraph == "" {
+			continue
+		}
+		if current.Len() > 0 && current.Len()+len(paragraph)+2 > target {
+			flush()
+		}
+		if current.Len() > 0 {
+			current.WriteString("\n\n")
+		}
+		current.WriteString(paragraph)
+	}
+	flush()
+	return chunks
+}
+
+func cleanStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if cleaned := markdownutil.WithoutEmbeddedDataImages(value); cleaned != "" {
+			result = append(result, cleaned)
+		}
+	}
+	return result
+}
+
+func positiveInts(values []int) []int {
+	result := make([]int, 0, len(values))
+	seen := map[int]bool{}
+	for _, value := range values {
+		if value > 0 && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func extractiveOverview(chunks []search.DocumentChunk) string {
+	parts := make([]string, 0, 3)
+	for _, chunk := range chunks {
+		if len(parts) == 3 {
+			break
+		}
+		if text := strings.TrimSpace(chunk.Content); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return capUTF8(strings.Join(parts, "\n\n"), 1200)
+}
+
+func encodeChunksJSONL(chunks []search.DocumentChunk) ([]byte, error) {
+	var payload bytes.Buffer
+	encoder := json.NewEncoder(&payload)
+	encoder.SetEscapeHTML(false)
+	for _, chunk := range chunks {
+		if err := encoder.Encode(chunk); err != nil {
+			return nil, err
+		}
+	}
+	return payload.Bytes(), nil
+}
+
+func versionOCRArtifactPath(doc *database.Document, versionID, filename string) string {
+	versionKey := versionID
+	if _, key, ok := strings.Cut(versionID, ":"); ok {
+		versionKey = key
+	}
+	return "documents/" + documentArtifactID(doc) + "/versions/" + versionKey + "/ocr/" + filename
 }
 
 func documentArtifactID(doc *database.Document) string {

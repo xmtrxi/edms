@@ -30,6 +30,30 @@ type Options struct {
 	ImageExportMode string
 }
 
+type ChunkOptions struct {
+	Options
+	MaxTokens           int
+	MergePeers          bool
+	UseMarkdownTables   bool
+	UseMarkdownImages   bool
+	ImagePlaceholder    string
+	IncludeRawText      bool
+	IncludeConvertedDoc bool
+}
+
+type Chunk struct {
+	Filename    string         `json:"filename"`
+	ChunkIndex  int            `json:"chunk_index"`
+	Text        string         `json:"text"`
+	RawText     string         `json:"raw_text,omitempty"`
+	NumTokens   int            `json:"num_tokens,omitempty"`
+	Headings    []string       `json:"headings,omitempty"`
+	Captions    []string       `json:"captions,omitempty"`
+	DocItems    []string       `json:"doc_items,omitempty"`
+	PageNumbers []int          `json:"page_numbers,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+}
+
 type TaskStatus struct {
 	TaskID   string
 	Status   string
@@ -47,6 +71,7 @@ type ConvertResult struct {
 	Pages       int
 	Status      string
 	Timings     map[string]float64
+	Chunks      []Chunk
 }
 
 func New(cfg config.DoclingConfig) *Client {
@@ -97,6 +122,46 @@ func (c *Client) ConvertFileAsync(ctx context.Context, filename string, r io.Rea
 	taskID := firstString(data, "task_id", "taskId", "id")
 	if taskID == "" {
 		return "", fmt.Errorf("docling async conversion returned no task id")
+	}
+	return taskID, nil
+}
+
+// ChunkFileAsync converts and chunks a document with Docling's native
+// HybridChunker. Chunk-specific multipart fields intentionally use Docling
+// Serve's chunking_ prefix; conversion fields use convert_.
+func (c *Client) ChunkFileAsync(ctx context.Context, filename string, r io.Reader, opts ChunkOptions) (string, error) {
+	if c == nil || c.baseURL == "" {
+		return "", fmt.Errorf("docling client is not configured")
+	}
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+	go func() {
+		defer pw.Close()
+		part, err := writer.CreateFormFile("files", filename)
+		if err == nil {
+			_, err = io.Copy(part, r)
+		}
+		if err == nil {
+			writeChunkOptions(writer, opts)
+			err = writer.Close()
+		}
+		if err != nil {
+			_ = pw.CloseWithError(err)
+		}
+	}()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint("/v1/chunk/hybrid/file/async"), pr)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.authorize(req)
+	var data map[string]any
+	if err := c.doJSON(req, &data); err != nil {
+		return "", err
+	}
+	taskID := firstString(data, "task_id", "taskId", "id")
+	if taskID == "" {
+		return "", fmt.Errorf("docling async chunking returned no task id")
 	}
 	return taskID, nil
 }
@@ -195,7 +260,14 @@ func (c *Client) Result(ctx context.Context, taskID string) (*ConvertResult, err
 	}
 	document, _ := data["document"].(map[string]any)
 	if document == nil {
-		return nil, fmt.Errorf("docling result contains no document")
+		document = firstConvertedDocument(data)
+	}
+	chunks := decodeChunks(data["chunks"])
+	if document == nil && len(chunks) == 0 {
+		return nil, fmt.Errorf("docling result contains no document or chunks")
+	}
+	if document == nil {
+		document = map[string]any{}
 	}
 	jsonContent, _ := document["json_content"].(map[string]any)
 	result := &ConvertResult{
@@ -206,6 +278,7 @@ func (c *Client) Result(ctx context.Context, taskID string) (*ConvertResult, err
 		Pages:       findInt(jsonContent, "pages", "num_pages", "page_count"),
 		Status:      strings.ToLower(firstString(data, "status")),
 		Timings:     findFloatMap(data, "timings"),
+		Chunks:      chunks,
 	}
 	if result.JsonContent == nil {
 		result.JsonContent = data
@@ -213,7 +286,105 @@ func (c *Client) Result(ctx context.Context, taskID string) (*ConvertResult, err
 	if result.TextContent == "" && result.MdContent != "" {
 		result.TextContent = result.MdContent
 	}
+	if result.TextContent == "" && len(chunks) > 0 {
+		parts := make([]string, 0, len(chunks))
+		for _, chunk := range chunks {
+			text := chunk.RawText
+			if text == "" {
+				text = chunk.Text
+			}
+			if strings.TrimSpace(text) != "" {
+				parts = append(parts, strings.TrimSpace(text))
+			}
+		}
+		result.TextContent = strings.Join(parts, "\n\n")
+	}
+	if result.MdContent == "" {
+		result.MdContent = result.TextContent
+	}
 	return result, nil
+}
+
+func writeChunkOptions(w *multipart.Writer, opts ChunkOptions) {
+	_ = w.WriteField("convert_do_ocr", strconv.FormatBool(opts.DoOCR))
+	if opts.TableMode != "" {
+		_ = w.WriteField("convert_table_mode", opts.TableMode)
+	}
+	if opts.ImageExportMode != "" {
+		_ = w.WriteField("convert_image_export_mode", opts.ImageExportMode)
+	}
+	_ = w.WriteField("include_converted_doc", strconv.FormatBool(opts.IncludeConvertedDoc))
+	if opts.MaxTokens > 0 {
+		_ = w.WriteField("chunking_max_tokens", strconv.Itoa(opts.MaxTokens))
+	}
+	_ = w.WriteField("chunking_merge_peers", strconv.FormatBool(opts.MergePeers))
+	_ = w.WriteField("chunking_use_markdown_tables", strconv.FormatBool(opts.UseMarkdownTables))
+	_ = w.WriteField("chunking_use_markdown_images", strconv.FormatBool(opts.UseMarkdownImages))
+	_ = w.WriteField("chunking_image_placeholder", opts.ImagePlaceholder)
+	_ = w.WriteField("chunking_include_raw_text", strconv.FormatBool(opts.IncludeRawText))
+}
+
+func firstConvertedDocument(data map[string]any) map[string]any {
+	documents, _ := data["documents"].([]any)
+	if len(documents) == 0 {
+		return nil
+	}
+	doc, _ := documents[0].(map[string]any)
+	if content, ok := doc["content"].(map[string]any); ok {
+		return content
+	}
+	return doc
+}
+
+func decodeChunks(value any) []Chunk {
+	items, _ := value.([]any)
+	chunks := make([]Chunk, 0, len(items))
+	for _, item := range items {
+		fields, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		chunk := Chunk{
+			Filename: firstString(fields, "filename"), ChunkIndex: intValue(fields["chunk_index"]),
+			Text: firstString(fields, "text"), RawText: firstString(fields, "raw_text"),
+			NumTokens: intValue(fields["num_tokens"]), Headings: stringSlice(fields["headings"]),
+			Captions: stringSlice(fields["captions"]), DocItems: stringSlice(fields["doc_items"]),
+			PageNumbers: intSlice(fields["page_numbers"]),
+		}
+		chunk.Metadata, _ = fields["metadata"].(map[string]any)
+		chunks = append(chunks, chunk)
+	}
+	return chunks
+}
+
+func intValue(value any) int {
+	switch v := value.(type) {
+	case float64:
+		return int(v)
+	case int:
+		return v
+	}
+	return 0
+}
+
+func stringSlice(value any) []string {
+	items, _ := value.([]any)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
+}
+
+func intSlice(value any) []int {
+	items, _ := value.([]any)
+	result := make([]int, 0, len(items))
+	for _, item := range items {
+		result = append(result, intValue(item))
+	}
+	return result
 }
 
 func (c *Client) endpoint(suffix string) string {

@@ -28,7 +28,7 @@ func New(cfg config.Config, deps handler.Deps) *Server {
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"},
 		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Visitor-Token"},
 	}))
 
 	s := &Server{
@@ -74,6 +74,10 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	handler.NewDepartmentsHandler(deps).RegisterRoutes(api)
 	handler.NewAdministrationHandler(deps).RegisterRoutes(api)
 	handler.NewFormsHandler(deps).RegisterRoutes(api)
+	handler.NewVisitorsHandler(deps).RegisterRoutes(api)
+	handler.NewWorkspaceHandler(deps).RegisterRoutes(api)
+	handler.NewAIHandler(deps).RegisterRoutes(api)
+	handler.NewOperationsHandler(deps).RegisterRoutes(api)
 	handler.NewFoldersHandler(deps).RegisterRoutes(api)
 	handler.NewDocumentsHandler(deps).RegisterRoutes(api)
 	handler.NewVersionsHandler(deps).RegisterRoutes(api)

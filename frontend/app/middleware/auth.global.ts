@@ -6,6 +6,8 @@ export default defineNuxtRouteMiddleware((to) => {
   const auth = useAuthStore();
   const isAuthPage = to.path === "/auth/login" || to.path === "/auth/register";
 
+  if (to.path.startsWith("/visit")) return;
+
   if (isAuthPage) {
     if (getToken()) return navigateTo("/");
     return;

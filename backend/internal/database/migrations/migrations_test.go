@@ -31,6 +31,11 @@ func TestMigrationsAreRegisteredInOrder(t *testing.T) {
 		"018_add_folders_and_document_folder_id",
 		"019_add_casbin_access_and_forms",
 		"020_make_processing_job_completion_optional",
+		"021_add_visitor_requests",
+		"022_add_visitor_operations",
+		"023_add_workspace_operations",
+		"024_add_ai_jobs",
+		"025_add_email_delivery",
 	}
 	if len(migrations) != len(expected) {
 		t.Fatalf("expected %d migrations, got %d", len(expected), len(migrations))

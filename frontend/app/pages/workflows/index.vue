@@ -1,673 +1,110 @@
 <script setup lang="ts">
   import {
-    PlusIcon,
-    CheckCircle2Icon,
-    XCircleIcon,
     ArrowRightIcon,
-    FileTextIcon,
-    GitBranchIcon,
-    SparklesIcon,
-    ClockIcon,
-    AlertTriangleIcon,
-    HashIcon,
-    SendIcon,
-    InboxIcon,
-    Building2Icon,
+    CheckCircle2Icon,
+    Clock3Icon,
+    RefreshCwIcon,
+    RouteIcon,
   } from "@lucide/vue";
-  import { ref, shallowRef, computed } from "vue";
-  import { toast } from "vue-sonner";
+  import { computed, onMounted, shallowRef } from "vue";
 
-  import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-  import { Badge } from "@/components/ui/badge";
-  import { Button } from "@/components/ui/button";
-  import { Card, CardContent } from "@/components/ui/card";
-  import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogDescription,
-    DialogFooter,
-  } from "@/components/ui/dialog";
-  import { Input } from "@/components/ui/input";
-  import { Label } from "@/components/ui/label";
-  import { Separator } from "@/components/ui/separator";
-  import {
-    Sheet,
-    SheetContent,
-    SheetHeader,
-    SheetTitle,
-    SheetDescription,
-  } from "@/components/ui/sheet";
-  import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-  import { Textarea } from "@/components/ui/textarea";
-  import { workflows as seedWorkflows, type Workflow } from "@/data/mock-data";
+  import type { DocumentRoute } from "@/types/api";
+  import { formatDate } from "@/utils/format";
 
   definePageMeta({
     title: "Workflows",
-    description: "Approvals, reviews, and signatures across your organization.",
-    breadcrumbs: [{ label: "Collaboration", to: "/" }, { label: "Workflows" }],
+    description: "Follow papers as they move through the office.",
+    breadcrumbs: [{ label: "Office", to: "/" }, { label: "Workflows" }],
   });
-
-  useHead({
-    title: "Workflows — Lumen DMS",
-    meta: [
-      {
-        name: "description",
-        content: "Manage approval workflows, reviews, and document routing across teams.",
-      },
-    ],
-  });
-
-  const statusMeta: Record<string, { label: string; Icon: typeof ClockIcon; tone: string }> = {
-    pending: { label: "Pending", Icon: ClockIcon, tone: "bg-secondary text-muted-foreground" },
-    in_review: { label: "In Review", Icon: ClockIcon, tone: "bg-info/10 text-info" },
-    approved: { label: "Approved", Icon: CheckCircle2Icon, tone: "bg-success/10 text-success" },
-    rejected: { label: "Rejected", Icon: XCircleIcon, tone: "bg-destructive/10 text-destructive" },
+  useHead({ title: "Workflows — Lumen DMS" });
+  const workspace = workspaceService();
+  const workflows = shallowRef<DocumentRoute[]>([]);
+  const refresh = async () => {
+    workflows.value = await workspace.workflows();
   };
-
-  const templates = [
-    {
-      id: "t1",
-      name: "Contract approval",
-      desc: "Legal review → Director sign-off.",
-      stages: 2,
-      defaultTitle: "Approve contract",
-      defaultType: "approval" as const,
-    },
-    {
-      id: "t2",
-      name: "Procurement PR",
-      desc: "Budget owner → Finance → Procurement.",
-      stages: 3,
-      defaultTitle: "Procurement request",
-      defaultType: "approval" as const,
-    },
-    {
-      id: "t3",
-      name: "Expense report",
-      desc: "Manager → Accounting.",
-      stages: 2,
-      defaultTitle: "Approve expense report",
-      defaultType: "approval" as const,
-    },
-    {
-      id: "t4",
-      name: "NDA review",
-      desc: "Counterparty → Legal.",
-      stages: 2,
-      defaultTitle: "NDA review",
-      defaultType: "review" as const,
-    },
-    {
-      id: "t5",
-      name: "Board resolution",
-      desc: "Secretary → Board → Legal → Archive.",
-      stages: 4,
-      defaultTitle: "Board resolution sign-off",
-      defaultType: "signature" as const,
-    },
-  ];
-
-  const items = shallowRef<Workflow[]>(seedWorkflows);
-  const newOpen = ref(false);
-  const active = shallowRef<Workflow | null>(null);
-  const newTitle = ref("");
-  const newType = ref("approval");
-  const newPriority = ref("medium");
-  const newDue = ref("");
-  const newNotes = ref("");
-
-  const overdue = computed(() =>
-    items.value.filter(
-      (w) => (w.status === "pending" || w.status === "in_review") && w.due === "Today",
-    ),
+  const active = computed(() =>
+    workflows.value.filter((item) => !["completed", "rejected", "canceled"].includes(item.status)),
   );
-  const activeItems = computed(() =>
-    items.value.filter((w) => w.status === "pending" || w.status === "in_review"),
-  );
-  const mine = computed(() =>
-    items.value.filter((w) => w.assignees.some((a) => a.initials === "AT")),
-  );
-  const completed = computed(() =>
-    items.value.filter((w) => w.status === "approved" || w.status === "rejected"),
-  );
-
-  const stages = ["Submitted", "Legal review", "Finance sign-off", "Final approval"];
-
-  const updateItem = (id: string, patch: Partial<Workflow>) => {
-    items.value = items.value.map((w) => (w.id === id ? { ...w, ...patch } : w));
-  };
-
-  const approveItem = (id: string, title: string) => {
-    updateItem(id, { status: "approved", progress: 100 });
-    toast.success('Approved "' + title + '"');
-  };
-
-  const rejectItem = (id: string, title: string) => {
-    updateItem(id, { status: "rejected", progress: 100 });
-    toast.error('Rejected "' + title + '"');
-  };
-
-  const createItem = () => {
-    const w: Workflow = {
-      id: `wf-${Date.now()}`,
-      title: newTitle.value.trim() || "New workflow",
-      doc: "No document attached",
-      status: "pending",
-      type: newType.value as Workflow["type"],
-      priority: newPriority.value as Workflow["priority"],
-      progress: 0,
-      due: newDue.value || "Next week",
-      assignees: [{ initials: "AT", name: "Aiko Tanaka" }],
-    };
-    items.value = [w, ...items.value];
-    newOpen.value = false;
-    newTitle.value = "";
-    newDue.value = "";
-    newNotes.value = "";
-    toast.success(`Workflow "${w.title}" created`);
-  };
-
-  const useTemplate = (t: (typeof templates)[number]) => {
-    newTitle.value = t.defaultTitle;
-    newType.value = t.defaultType;
-    newPriority.value = "medium";
-    newDue.value = "";
-    newNotes.value = "";
-    newOpen.value = true;
-  };
-
-  const refNum = (id: string) => `WF-${id.slice(-5).toUpperCase()}`;
+  const completed = computed(() => workflows.value.filter((item) => item.status === "completed"));
+  onMounted(refresh);
 </script>
-
 <template>
-  <Teleport to="#page-actions-target">
-    <Button size="sm" class="gap-1.5" @click="newOpen = true">
-      <PlusIcon class="h-4 w-4" /> New workflow
-    </Button>
-  </Teleport>
-
-  <Tabs default-value="active">
-    <TabsList class="bg-secondary/60">
-      <TabsTrigger value="active">
-        <InboxIcon class="h-3.5 w-3.5 md:mr-1.5" />
-        <span class="hidden md:inline">Active</span>
-        <Badge
-          variant="secondary"
-          class="bg-primary/10 text-primary ml-1.5 h-4 border-0 px-1 text-[10px]"
-          >{{ activeItems.length }}</Badge
-        >
-      </TabsTrigger>
-      <TabsTrigger value="my">
-        <span class="hidden md:inline">My desk</span>
-        <Badge variant="secondary" class="bg-secondary ml-1.5 h-4 border-0 px-1 text-[10px]">{{
-          mine.length
-        }}</Badge>
-      </TabsTrigger>
-      <TabsTrigger value="completed">
-        <span class="hidden md:inline">Completed</span>
-        <Badge variant="secondary" class="bg-secondary ml-1.5 h-4 border-0 px-1 text-[10px]">{{
-          completed.length
-        }}</Badge>
-      </TabsTrigger>
-      <TabsTrigger value="templates">Templates</TabsTrigger>
-    </TabsList>
-
-    <TabsContent value="active" class="mt-4">
-      <div
-        v-if="overdue.length > 0"
-        class="border-destructive/20 bg-destructive/5 mb-3 flex items-center gap-2 rounded-lg border px-3 py-2"
-      >
-        <AlertTriangleIcon class="text-destructive h-4 w-4 shrink-0" />
-        <span class="text-destructive text-xs font-medium"
-          >{{ overdue.length }} item{{ overdue.length > 1 ? "s" : "" }} past due</span
+  <div class="space-y-5">
+    <div class="grid gap-3 sm:grid-cols-3">
+      <div class="bg-card rounded-xl border p-4 shadow-sm">
+        <p class="text-muted-foreground text-xs font-medium tracking-wider uppercase">In motion</p>
+        <p class="mt-2 text-3xl font-semibold">{{ active.length }}</p>
+      </div>
+      <div class="bg-card rounded-xl border p-4 shadow-sm">
+        <p class="text-muted-foreground text-xs font-medium tracking-wider uppercase">Completed</p>
+        <p class="mt-2 text-3xl font-semibold">{{ completed.length }}</p>
+      </div>
+      <div class="bg-primary text-primary-foreground rounded-xl border p-4 shadow-sm">
+        <p class="text-xs font-medium tracking-wider uppercase opacity-70">All routes</p>
+        <p class="mt-2 text-3xl font-semibold">{{ workflows.length }}</p>
+      </div>
+    </div>
+    <div class="bg-card rounded-2xl border shadow-sm">
+      <div class="flex items-center justify-between border-b p-4">
+        <div>
+          <h2 class="font-semibold">Paper trail</h2>
+          <p class="text-muted-foreground text-sm">
+            Live document routes and their current office stage.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          class="gap-2"
+          :disabled="workspace.loading.value"
+          @click="refresh"
+          ><RefreshCwIcon class="size-4" />Refresh</Button
         >
       </div>
       <div
-        v-if="activeItems.length === 0"
-        class="border-border text-muted-foreground rounded-xl border border-dashed p-10 text-center text-sm"
+        v-if="workspace.error.value"
+        class="bg-destructive/5 text-destructive m-4 rounded-lg p-3 text-sm"
       >
-        <InboxIcon class="text-muted-foreground/40 mx-auto mb-2 h-6 w-6" />
-        No active workflows.
+        {{ workspace.error.value }}
       </div>
-      <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Card
-          v-for="w in activeItems"
-          :key="w.id"
-          :class="`border-border group cursor-pointer shadow-sm transition-all hover:shadow-md ${w.due === 'Today' ? 'border-destructive/30' : ''}`"
-          @click="active = w"
-        >
-          <CardContent class="p-4">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-muted-foreground/60 font-mono text-[10px]">{{
-                    refNum(w.id)
-                  }}</span>
-                  <Badge variant="secondary" class="bg-secondary border-0 text-[10px] capitalize">{{
-                    w.type
-                  }}</Badge>
-                  <Badge
-                    variant="secondary"
-                    :class="`border-0 text-[10px] capitalize ${w.priority === 'high' ? 'bg-destructive/10 text-destructive' : w.priority === 'medium' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`"
-                    >{{ w.priority }}</Badge
-                  >
-                </div>
-                <h3 class="mt-1.5 text-sm leading-snug font-semibold">{{ w.title }}</h3>
-                <p class="text-muted-foreground mt-0.5 flex items-center gap-1 text-xs">
-                  <FileTextIcon class="h-3 w-3 shrink-0" />{{ w.doc }}
-                </p>
-              </div>
-              <div class="shrink-0 text-right">
-                <Badge
-                  variant="secondary"
-                  :class="`shrink-0 gap-1 border-0 text-[10px] ${statusMeta[w.status].tone}`"
-                >
-                  <component :is="statusMeta[w.status].Icon" class="h-3 w-3" />
-                  {{ statusMeta[w.status].label }}
-                </Badge>
-                <div
-                  class="mt-1 flex items-center gap-1 text-[10px]"
-                  :class="
-                    w.due === 'Today' ? 'text-destructive font-medium' : 'text-muted-foreground'
-                  "
-                >
-                  <ClockIcon class="h-3 w-3" />
-                  {{ w.due }}
-                </div>
-              </div>
-            </div>
-            <div class="mt-2 flex items-center gap-2">
-              <div class="bg-secondary/60 h-1 flex-1 overflow-hidden rounded-full">
-                <div
-                  class="bg-primary/60 h-full rounded-full"
-                  :style="{ width: `${w.progress}%` }"
-                />
-              </div>
-              <span class="text-muted-foreground text-[11px] tabular-nums">{{ w.progress }}%</span>
-            </div>
-            <div class="mt-3 flex items-center justify-between">
-              <div class="flex items-center gap-2">
-                <div class="flex -space-x-1">
-                  <Avatar
-                    v-for="a in w.assignees"
-                    :key="a.initials"
-                    class="ring-card h-6 w-6 ring-2"
-                  >
-                    <AvatarFallback class="bg-secondary text-[9px]">{{
-                      a.initials
-                    }}</AvatarFallback>
-                  </Avatar>
-                </div>
-              </div>
-              <div class="flex items-center gap-1" @click.stop>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="h-7 gap-1 text-xs"
-                  @click="approveItem(w.id, w.title)"
-                >
-                  <CheckCircle2Icon class="h-3 w-3" /> Approve
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  class="h-7 text-xs"
-                  @click="rejectItem(w.id, w.title)"
-                >
-                  <XCircleIcon class="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </TabsContent>
-
-    <TabsContent value="my" class="mt-4">
-      <div
-        v-if="mine.length === 0"
-        class="border-border text-muted-foreground rounded-xl border border-dashed p-10 text-center text-sm"
-      >
-        Nothing assigned to you.
-      </div>
-      <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Card
-          v-for="w in mine"
-          :key="w.id"
-          class="border-border cursor-pointer shadow-sm transition-all hover:shadow-md"
-          @click="active = w"
-        >
-          <CardContent class="p-4">
-            <div class="flex items-start justify-between gap-3">
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-muted-foreground/60 font-mono text-[10px]">{{
-                    refNum(w.id)
-                  }}</span>
-                  <Badge variant="secondary" class="bg-secondary border-0 text-[10px] capitalize">{{
-                    w.type
-                  }}</Badge>
-                  <Badge
-                    variant="secondary"
-                    :class="`border-0 text-[10px] capitalize ${w.priority === 'high' ? 'bg-destructive/10 text-destructive' : w.priority === 'medium' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`"
-                    >{{ w.priority }}</Badge
-                  >
-                </div>
-                <h3 class="mt-1.5 text-sm leading-snug font-semibold">{{ w.title }}</h3>
-                <p class="text-muted-foreground mt-0.5 flex items-center gap-1 text-xs">
-                  <FileTextIcon class="h-3 w-3 shrink-0" />{{ w.doc }}
-                </p>
-              </div>
-              <Badge
-                variant="secondary"
-                :class="`shrink-0 gap-1 border-0 text-[10px] ${statusMeta[w.status].tone}`"
-              >
-                <component :is="statusMeta[w.status].Icon" class="h-3 w-3" />
-                {{ statusMeta[w.status].label }}
-              </Badge>
-            </div>
-            <div class="mt-2 flex items-center gap-2">
-              <div class="bg-secondary/60 h-1 flex-1 overflow-hidden rounded-full">
-                <div
-                  class="bg-primary/60 h-full rounded-full"
-                  :style="{ width: `${w.progress}%` }"
-                />
-              </div>
-              <span class="text-muted-foreground text-[11px] tabular-nums">{{ w.progress }}%</span>
-            </div>
-            <div class="mt-3 flex items-center justify-between">
-              <div class="text-muted-foreground flex items-center gap-2 text-xs">
-                <ClockIcon class="h-3 w-3" /> Due {{ w.due }}
-              </div>
-              <div class="flex items-center gap-1" @click.stop>
-                <Button size="sm" class="h-7 gap-1 text-xs" @click="approveItem(w.id, w.title)">
-                  <CheckCircle2Icon class="h-3 w-3" /> Approve
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="h-7 text-xs"
-                  @click="rejectItem(w.id, w.title)"
-                >
-                  <XCircleIcon class="h-3 w-3" /> Return
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </TabsContent>
-
-    <TabsContent value="completed" class="mt-4">
-      <div
-        v-if="completed.length === 0"
-        class="border-border text-muted-foreground rounded-xl border border-dashed p-10 text-center text-sm"
-      >
-        No completed workflows.
-      </div>
-      <div v-else class="grid grid-cols-1 gap-2">
-        <Card
-          v-for="w in completed"
-          :key="w.id"
-          class="border-border/60 cursor-pointer shadow-sm transition-all hover:shadow-md"
-          @click="active = w"
-        >
-          <CardContent class="p-3">
-            <div class="flex items-center gap-3">
-              <div
-                :class="w.status === 'approved' ? 'text-success' : 'text-destructive'"
-                class="shrink-0"
-              >
-                <component
-                  :is="w.status === 'approved' ? CheckCircle2Icon : XCircleIcon"
-                  class="h-5 w-5"
-                />
-              </div>
-              <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5">
-                  <span class="text-muted-foreground/60 font-mono text-[10px]">{{
-                    refNum(w.id)
-                  }}</span>
-                  <span class="truncate text-sm font-medium">{{ w.title }}</span>
-                </div>
-                <p class="text-muted-foreground text-xs">{{ w.doc }}</p>
-              </div>
-              <Badge
-                variant="secondary"
-                class="border-0 text-[10px] capitalize"
-                :class="
-                  w.status === 'approved'
-                    ? 'bg-success/10 text-success'
-                    : 'bg-destructive/10 text-destructive'
-                "
-                >{{ w.status }}</Badge
-              >
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </TabsContent>
-
-    <TabsContent value="templates" class="mt-4">
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Card
-          v-for="t in templates"
-          :key="t.id"
-          class="border-border shadow-sm transition-all hover:shadow-md"
-        >
-          <CardContent class="p-4">
-            <div class="bg-primary/10 text-primary grid h-8 w-8 place-items-center rounded-lg">
-              <GitBranchIcon class="h-4 w-4" />
-            </div>
-            <h3 class="mt-2.5 text-sm font-semibold">{{ t.name }}</h3>
-            <p class="text-muted-foreground mt-0.5 text-xs" v-html="t.desc" />
-            <div class="mt-3 flex items-center justify-between">
-              <Badge variant="secondary" class="bg-secondary border-0 text-[10px]"
-                >{{ t.stages }} stages</Badge
-              >
-              <Button size="sm" variant="outline" class="h-7 gap-1 text-xs" @click="useTemplate(t)">
-                Use <ArrowRightIcon class="h-3 w-3" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </TabsContent>
-  </Tabs>
-
-  <!-- New workflow dialog -->
-  <Dialog :open="newOpen" @update:open="(v: boolean) => (newOpen = v)">
-    <DialogContent class="max-w-lg">
-      <DialogHeader>
-        <DialogTitle class="flex items-center gap-2 text-base"
-          ><GitBranchIcon class="text-primary h-4 w-4" /> New workflow</DialogTitle
-        >
-        <DialogDescription class="text-xs"
-          >Route a document through approvals, reviews, or signatures.</DialogDescription
-        >
-      </DialogHeader>
-      <div class="space-y-3">
-        <div class="space-y-1.5">
-          <Label for="wtitle">Title</Label>
-          <Input id="wtitle" v-model="newTitle" placeholder="e.g. Approve vendor renewal" />
-        </div>
-        <div class="grid grid-cols-2 gap-3">
-          <div class="space-y-1.5">
-            <Label>Type</Label>
-            <Select v-model="newType">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="approval">Approval</SelectItem>
-                <SelectItem value="review">Review</SelectItem>
-                <SelectItem value="signature">Signature</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div class="space-y-1.5">
-            <Label>Priority</Label>
-            <Select v-model="newPriority">
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
-        <div class="space-y-1.5">
-          <Label for="due">Due</Label>
-          <Input id="due" v-model="newDue" placeholder="Tomorrow, Friday, 2026-07-15" />
-        </div>
-        <div class="space-y-1.5">
-          <Label for="notes">Notes (optional)</Label>
-          <Textarea id="notes" v-model="newNotes" rows="2" placeholder="Context for reviewers…" />
-        </div>
-        <div
-          class="border-primary/20 bg-primary/5 flex items-start gap-2 rounded-lg border p-3 text-xs"
-        >
-          <SparklesIcon class="text-primary mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span
-            >AI will suggest reviewers and a routing order based on the document type and
-            library.</span
+      <div v-if="workflows.length" class="divide-y">
+        <NuxtLink
+          v-for="item in workflows"
+          :key="item.id"
+          :to="`/document/${item.document_id}`"
+          class="hover:bg-muted/35 flex items-center gap-4 p-4 transition"
+          ><div
+            class="grid size-10 place-items-center rounded-xl"
+            :class="
+              item.status === 'completed'
+                ? 'bg-success/10 text-success'
+                : 'bg-primary/10 text-primary'
+            "
           >
-        </div>
-      </div>
-      <DialogFooter>
-        <Button variant="ghost" @click="newOpen = false">Cancel</Button>
-        <Button @click="createItem()">Create workflow</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>
-
-  <!-- Detail sheet -->
-  <Sheet
-    :open="!!active"
-    @update:open="
-      (v: boolean) => {
-        if (!v) active = null;
-      }
-    "
-  >
-    <SheetContent class="w-full overflow-y-auto sm:max-w-md">
-      <template v-if="active">
-        <SheetHeader>
-          <div
-            class="text-muted-foreground/60 mb-1 flex items-center gap-1.5 font-mono text-[10px]"
-          >
-            {{ refNum(active.id) }}
-          </div>
-          <SheetTitle>{{ active.title }}</SheetTitle>
-          <SheetDescription class="flex items-center gap-1"
-            ><FileTextIcon class="h-3 w-3" /> {{ active.doc }}</SheetDescription
-          >
-        </SheetHeader>
-        <div class="mt-4 flex flex-wrap items-center gap-1.5">
-          <Badge
-            variant="secondary"
-            :class="`border-0 text-[10px] ${statusMeta[active.status].tone}`"
-            >{{ statusMeta[active.status].label }}</Badge
-          >
-          <Badge variant="secondary" class="bg-secondary border-0 text-[10px] capitalize">{{
-            active.type
-          }}</Badge>
-          <Badge
-            variant="secondary"
-            :class="`border-0 text-[10px] capitalize ${active.priority === 'high' ? 'bg-destructive/10 text-destructive' : active.priority === 'medium' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`"
-            >{{ active.priority }} priority</Badge
-          >
-          <Badge
-            variant="secondary"
-            class="border-0 text-[10px]"
-            :class="active.due === 'Today' ? 'bg-destructive/10 text-destructive' : 'bg-secondary'"
-            >{{ active.due }}</Badge
-          >
-        </div>
-
-        <div class="mt-4">
-          <div class="text-muted-foreground mb-1 flex items-center justify-between text-[11px]">
-            <span>Progress</span><span class="tabular-nums">{{ active.progress }}%</span>
-          </div>
-          <div class="bg-secondary/60 h-1.5 overflow-hidden rounded-full">
-            <div
-              class="bg-primary/60 h-full rounded-full"
-              :style="{ width: `${active.progress}%` }"
+            <CheckCircle2Icon v-if="item.status === 'completed'" class="size-5" /><RouteIcon
+              v-else
+              class="size-5"
             />
           </div>
-        </div>
-
-        <Separator class="my-4" />
-
-        <p class="mb-3 flex items-center gap-1.5 text-xs font-medium">
-          <Building2Icon class="text-primary h-3.5 w-3.5" /> Routing stages
+          <div class="min-w-0 flex-1">
+            <p class="truncate text-sm font-semibold">{{ item.title }}</p>
+            <p class="text-muted-foreground mt-1 text-xs">
+              Step {{ item.current_step + 1 }} · Updated {{ formatDate(item.updated_at) }}
+            </p>
+          </div>
+          <Badge variant="secondary" class="capitalize">{{
+            item.status.replaceAll("_", " ")
+          }}</Badge
+          ><ArrowRightIcon class="text-muted-foreground size-4"
+        /></NuxtLink>
+      </div>
+      <div v-else-if="!workspace.loading.value" class="py-20 text-center">
+        <Clock3Icon class="text-muted-foreground/50 mx-auto size-8" />
+        <h3 class="mt-3 font-semibold">No routes yet</h3>
+        <p class="text-muted-foreground mt-1 text-sm">
+          Open a document and route it to start its paper trail.
         </p>
-        <div class="space-y-2">
-          <div v-for="(s, i) in stages" :key="s" class="flex items-center gap-2.5 text-xs">
-            <div
-              :class="`grid h-5 w-5 shrink-0 place-items-center rounded-full ${(i / stages.length) * 100 < active.progress ? 'bg-success/15 text-success' : 'bg-secondary text-muted-foreground'}`"
-            >
-              <CheckCircle2Icon
-                v-if="(i / stages.length) * 100 < active.progress"
-                class="h-3 w-3"
-              />
-              <span v-else>{{ i + 1 }}</span>
-            </div>
-            <span
-              :class="
-                (i / stages.length) * 100 < active.progress
-                  ? 'font-medium'
-                  : 'text-muted-foreground'
-              "
-              >{{ s }}</span
-            >
-          </div>
-        </div>
-
-        <Separator class="my-4" />
-
-        <p class="mb-2 text-xs font-medium">Assignees</p>
-        <div class="space-y-2">
-          <div v-for="a in active.assignees" :key="a.initials" class="flex items-center gap-2">
-            <Avatar class="h-7 w-7"
-              ><AvatarFallback class="bg-secondary text-[10px]">{{
-                a.initials
-              }}</AvatarFallback></Avatar
-            >
-            <span class="text-sm">{{ a.name }}</span>
-          </div>
-        </div>
-
-        <div
-          v-if="active.status === 'pending' || active.status === 'in_review'"
-          class="mt-6 flex items-center gap-2"
-        >
-          <Button
-            class="flex-1"
-            size="sm"
-            @click="
-              updateItem(active.id, { status: 'approved', progress: 100 });
-              active = null;
-              toast.success('Workflow approved');
-            "
-          >
-            <CheckCircle2Icon class="mr-1.5 h-3.5 w-3.5" /> Approve
-          </Button>
-          <Button
-            variant="outline"
-            class="flex-1"
-            size="sm"
-            @click="
-              updateItem(active.id, { status: 'rejected', progress: 100 });
-              active = null;
-              toast.error('Workflow rejected');
-            "
-          >
-            <XCircleIcon class="mr-1.5 h-3.5 w-3.5" /> Reject
-          </Button>
-        </div>
-      </template>
-    </SheetContent>
-  </Sheet>
+      </div>
+    </div>
+  </div>
 </template>

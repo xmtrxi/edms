@@ -31,7 +31,6 @@
   import { Separator } from "@/components/ui/separator";
   import { SidebarTrigger } from "@/components/ui/sidebar";
   import { useKeyboardShortcuts } from "@/composables/useKeyboardShortcuts";
-  import { activityFeed } from "@/data/mock-data";
 
   const router = useRouter();
 
@@ -49,7 +48,16 @@
 
   const uploadOpen = ref(false);
   const paletteOpen = ref(false);
-  const notifications = ref([...activityFeed]);
+  const notifications = ref<
+    Array<{
+      id: string;
+      initials: string;
+      who: string;
+      action: string;
+      target: string;
+      when: string;
+    }>
+  >([]);
   const unread = ref(notifications.value.length);
 
   const THEME_KEY = "lumen.theme";

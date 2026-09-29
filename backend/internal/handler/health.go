@@ -38,7 +38,9 @@ func (h *HealthHandler) health(c *echo.Context) error {
 		"status": "ok",
 		"env":    h.deps.Cfg.App.Env,
 		"features": map[string]bool{
-			"signing": h.deps.Cfg.Signing.Enabled,
+			"signing":        h.deps.Cfg.Signing.Enabled,
+			"ai":             h.deps.Cfg.AI.Enabled,
+			"visitor_access": true,
 		},
 		"checks": checks,
 	})

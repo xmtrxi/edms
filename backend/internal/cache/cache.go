@@ -89,6 +89,21 @@ func (c *Cache) Increment(key string) error {
 	return c.Client.Do(ctx, c.Client.B().Incr().Key(key).Build()).Error()
 }
 
+// IncrementWindow increments a distributed counter and starts its expiry on
+// first use. It is suitable for coarse API throttles shared by all instances.
+func (c *Cache) IncrementWindow(ctx context.Context, key string, window time.Duration) (int64, error) {
+	count, err := c.Client.Do(ctx, c.Client.B().Incr().Key(key).Build()).ToInt64()
+	if err != nil {
+		return 0, err
+	}
+	if count == 1 {
+		if err := c.Client.Do(ctx, c.Client.B().Expire().Key(key).Seconds(int64(window/time.Second)).Build()).Error(); err != nil {
+			return 0, err
+		}
+	}
+	return count, nil
+}
+
 func (c *Cache) Decrement(key string) error {
 	return c.Client.Do(ctx, c.Client.B().Decr().Key(key).Build()).Error()
 }
