@@ -4,6 +4,7 @@ import "time"
 
 type WorkflowRequest struct {
 	ID                RecordID  `json:"id,omitempty"`
+	OrgID             string    `json:"org_id"`
 	DocumentID        string    `json:"document_id"`
 	StartedVersionID  string    `json:"started_version_id"`
 	CurrentVersionID  string    `json:"current_version_id"`

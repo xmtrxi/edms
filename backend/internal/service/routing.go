@@ -67,7 +67,7 @@ func (s *RoutingService) Create(ctx context.Context, ownerID, documentID string,
 		priority = "medium"
 	}
 	workflow, err := surrealdb.Create[database.WorkflowRequest](ctx, s.DB, "workflow_requests", &database.WorkflowRequest{
-		DocumentID: documentID, StartedVersionID: doc.CurrentVersionID, CurrentVersionID: doc.CurrentVersionID,
+		OrgID: doc.OrgID, DocumentID: documentID, StartedVersionID: doc.CurrentVersionID, CurrentVersionID: doc.CurrentVersionID,
 		CreatedBy: ownerID, Title: strings.TrimSpace(in.Title), Status: database.WorkflowStatusActive,
 		Priority: priority, CurrentStep: 0, DueAt: in.DueAt, CreatedAt: now, UpdatedAt: now,
 	})

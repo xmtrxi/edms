@@ -46,3 +46,17 @@ func TestChunkKeepsSurrealDocumentIDSeparateFromPrimaryKey(t *testing.T) {
 		t.Fatalf("document_id = %v, want documents:abc", fields["document_id"])
 	}
 }
+
+func TestAccessFilterScopesToOrganization(t *testing.T) {
+	got := accessFilter(SearchInput{UserID: "users:u", OrgID: "organizations:a", FolderIDs: []string{"folders:f"}, DocumentIDs: []string{"documents:d"}})
+	want := `(org_id = "organizations:a" OR org_id NOT EXISTS) AND (owner_id = "users:u" OR folder_id IN ["folders:f"] OR document_id IN ["documents:d"])`
+	if got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	if admin := accessFilter(SearchInput{UserID: "users:u", OrgID: "organizations:a", AllInOrg: true}); admin != `(org_id = "organizations:a" OR org_id NOT EXISTS)` {
+		t.Fatalf("admin filter: %s", admin)
+	}
+	if owner := accessFilter(SearchInput{UserID: "users:u"}); owner != `owner_id = "users:u"` {
+		t.Fatalf("owner-only filter: %s", owner)
+	}
+}

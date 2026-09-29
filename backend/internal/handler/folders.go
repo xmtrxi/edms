@@ -12,12 +12,14 @@ import (
 )
 
 type FoldersHandler struct {
-	folders *service.FolderService
-	auth    *service.AuthService
+	folders    *service.FolderService
+	auth       *service.AuthService
+	principals *service.PrincipalService
 }
 
 func NewFoldersHandler(deps Deps) *FoldersHandler {
-	return &FoldersHandler{folders: service.NewFolderService(deps.Client()), auth: service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger)}
+	auth := service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger)
+	return &FoldersHandler{folders: service.NewFolderService(deps.Client()), auth: auth, principals: service.NewPrincipalService(deps.Client(), auth.Orgs)}
 }
 
 func (h *FoldersHandler) RegisterRoutes(api *echo.Group) {
@@ -38,14 +40,6 @@ type folderRequest struct {
 	Description        string `json:"description"`
 	Color              string `json:"color"`
 	InheritPermissions *bool  `json:"inherit_permissions"`
-}
-
-type folderGrantRequest struct {
-	PrincipalType string   `json:"principal_type"`
-	PrincipalID   string   `json:"principal_id"`
-	Role          string   `json:"role"`
-	Allow         []string `json:"allow"`
-	Deny          []string `json:"deny"`
 }
 
 func folderInput(request folderRequest) service.FolderInput {
@@ -69,7 +63,12 @@ func (h *FoldersHandler) get(c *echo.Context) error {
 	if err != nil {
 		return h.handleError(c, err)
 	}
-	return respondJSON(c, 200, dto.OK(dto.NewManagedFolderResponse(folder, 0)))
+	response := dto.NewManagedFolderResponse(folder, 0)
+	ctx := c.Request().Context()
+	access := service.NewAccessService(h.folders.DB)
+	response.CanManage, _ = access.CanFolder(ctx, string(user.ID), "manage_folder", string(folder.ID))
+	response.CanUpload, _ = access.CanFolder(ctx, string(user.ID), "upload", string(folder.ID))
+	return respondJSON(c, 200, dto.OK(response))
 }
 func (h *FoldersHandler) create(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
@@ -108,15 +107,15 @@ func (h *FoldersHandler) listGrants(c *echo.Context) error {
 	if err != nil {
 		return h.handleError(c, err)
 	}
-	return respondJSON(c, 200, dto.OK(grants))
+	return respondJSON(c, 200, dto.OK(h.principals.Describe(c.Request().Context(), middleware.CurrentOrgID(c), grants)))
 }
 func (h *FoldersHandler) upsertGrant(c *echo.Context) error {
 	user := middleware.CurrentUser(c)
-	var request folderGrantRequest
+	var request service.GrantInput
 	if err := bind(c, &request); err != nil {
 		return err
 	}
-	grant, err := h.folders.UpsertGrant(c.Request().Context(), string(user.ID), c.Param("id"), service.FolderGrantInput{PrincipalType: request.PrincipalType, PrincipalID: request.PrincipalID, Role: request.Role, Allow: request.Allow, Deny: request.Deny})
+	grant, err := h.folders.UpsertGrant(c.Request().Context(), string(user.ID), c.Param("id"), request)
 	if err != nil {
 		return h.handleError(c, err)
 	}
@@ -137,6 +136,10 @@ func (h *FoldersHandler) handleError(c *echo.Context, err error) error {
 		return respondError(c, 409, "folder contains documents or subfolders")
 	case errors.Is(err, service.ErrInvalidFolderParent):
 		return respondError(c, 400, "select a valid parent folder")
+	case errors.Is(err, service.ErrAccessDenied):
+		return respondError(c, 403, "you do not have permission to do this")
+	case errors.Is(err, service.ErrFolderNameTaken):
+		return respondError(c, 409, err.Error())
 	default:
 		return respondError(c, 400, err.Error())
 	}

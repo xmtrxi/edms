@@ -3,7 +3,6 @@ package handler
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/labstack/echo/v5"
 	"github.com/xmtrxi/edms/internal/dto"
@@ -35,9 +34,6 @@ func (h *WorkspaceHandler) RegisterRoutes(api *echo.Group) {
 	g.POST("/documents/:id/restore", h.restore)
 	g.DELETE("/documents/:id/permanent", h.permanentlyDelete)
 	g.GET("/shared", h.shared)
-	g.GET("/documents/:id/shares", h.documentShares)
-	g.POST("/documents/:id/shares", h.createShare)
-	g.DELETE("/documents/:id/shares/:share_id", h.revokeShare)
 	g.GET("/workflows", h.workflows)
 	g.GET("/settings", h.settings)
 	g.PUT("/settings", h.saveSettings)
@@ -110,34 +106,6 @@ func (h *WorkspaceHandler) shared(c *echo.Context) error {
 		return respondError(c, 500, "failed to list shared files")
 	}
 	return respondJSON(c, 200, dto.List(items, int64(len(items)), 1, len(items)))
-}
-func (h *WorkspaceHandler) documentShares(c *echo.Context) error {
-	items, err := h.workspace.DocumentShares(c.Request().Context(), actor(c), c.Param("id"))
-	if err != nil {
-		return respondError(c, 400, err.Error())
-	}
-	return respondJSON(c, 200, dto.OK(items))
-}
-func (h *WorkspaceHandler) createShare(c *echo.Context) error {
-	var input struct {
-		Email      string    `json:"email"`
-		Permission string    `json:"permission"`
-		ExpiresAt  time.Time `json:"expires_at"`
-	}
-	if err := bind(c, &input); err != nil {
-		return err
-	}
-	item, token, err := h.workspace.CreateShare(c.Request().Context(), actor(c), c.Param("id"), input.Email, input.Permission, input.ExpiresAt)
-	if err != nil {
-		return respondError(c, 400, err.Error())
-	}
-	return respondJSON(c, 201, dto.Created(map[string]any{"share": item, "token": token}))
-}
-func (h *WorkspaceHandler) revokeShare(c *echo.Context) error {
-	if err := h.workspace.RevokeShare(c.Request().Context(), actor(c), c.Param("id"), c.Param("share_id")); err != nil {
-		return respondError(c, 400, err.Error())
-	}
-	return c.NoContent(204)
 }
 func (h *WorkspaceHandler) workflows(c *echo.Context) error {
 	items, err := h.workspace.Workflows(c.Request().Context(), actor(c))

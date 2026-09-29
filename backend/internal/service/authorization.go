@@ -85,6 +85,17 @@ func (s *AuthorizationService) Can(userID, domain, object, action string) bool {
 	return err == nil && ok
 }
 
+// RolesFor lists the Casbin roles the user holds inside one organization.
+func (s *AuthorizationService) RolesFor(userID, domain string) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	roles, err := s.enforcer.GetRolesForUser(userID, domain)
+	if err != nil {
+		return nil
+	}
+	return roles
+}
+
 func (s *AuthorizationService) Require(userID, domain, object, action string) error {
 	if !s.Can(userID, domain, object, action) {
 		return ErrAccessDenied

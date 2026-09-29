@@ -141,7 +141,7 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 
 	// A file copied to another folder is still the same document. Keep the
 	// existing row instead of sending its bytes through OCR a second time.
-	existing, err = s.findByChecksum(ctx, ownerID, checksum)
+	existing, err = s.findByChecksum(ctx, orgOf(ctx), "", checksum)
 	if err != nil || existing != nil {
 		return false, err
 	}
@@ -156,16 +156,19 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 	name := filepath.Base(storagePath)
 	folderPath := folderPathForStoragePath(storagePath)
 	doc := &database.Document{
-		ID:              database.RecordID(newDocumentID()),
-		OwnerID:         ownerID,
-		Name:            name,
-		OriginalName:    name,
-		MimeType:        mimeTypeForName(name),
-		Size:            size,
-		StorageProvider: s.storage.Name(),
-		StoragePath:     storagePath,
-		Checksum:        checksum,
-		Status:          database.DocumentStatusUploaded,
+		ID:                 database.RecordID(newDocumentID()),
+		OrgID:              orgOf(ctx),
+		InheritPermissions: true,
+		Sensitivity:        database.SensitivityInternal,
+		OwnerID:            ownerID,
+		Name:               name,
+		OriginalName:       name,
+		MimeType:           mimeTypeForName(name),
+		Size:               size,
+		StorageProvider:    s.storage.Name(),
+		StoragePath:        storagePath,
+		Checksum:           checksum,
+		Status:             database.DocumentStatusUploaded,
 		Metadata: generatedMetadata(name, storagePath, checksum, map[string]any{
 			"source":      "storage_sync",
 			"folder_path": folderPath,
@@ -173,7 +176,7 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	created, err := surrealdb.Create[database.Document](ctx, s.DB, "documents", doc)
+	created, err := surrealdb.Create[database.Document](ctx, s.DB, "documents", documentRecord(doc))
 	if err != nil {
 		return false, fmt.Errorf("create document record: %w", err)
 	}
@@ -185,10 +188,10 @@ func (s *DocumentService) importStorageFile(ctx context.Context, ownerID, storag
 	return true, nil
 }
 
-func (s *DocumentService) backfillMissingChecksums(ctx context.Context, ownerID string) error {
+func (s *DocumentService) backfillMissingChecksums(ctx context.Context, orgID string) error {
 	results, err := surrealdb.Query[[]database.Document](ctx, s.DB,
-		"SELECT * FROM documents WHERE owner_id = $owner AND (checksum = NONE OR checksum = '')",
-		map[string]any{"owner": ownerID},
+		"SELECT * FROM documents WHERE org_id = $org AND (checksum = NONE OR checksum = '')",
+		map[string]any{"org": orgID},
 	)
 	if err != nil {
 		return err
@@ -223,14 +226,23 @@ func (s *DocumentService) backfillMissingChecksums(ctx context.Context, ownerID 
 	return nil
 }
 
-func (s *DocumentService) findByChecksum(ctx context.Context, ownerID, checksum string) (*database.Document, error) {
+// findByChecksum finds an active copy of the same bytes in the organization,
+// within folderID when one is given.
+func (s *DocumentService) findByChecksum(ctx context.Context, orgID, folderID, checksum string) (*database.Document, error) {
 	if checksum == "" {
 		return nil, nil
 	}
-	return surrealgoorm.Query[database.Document](s.DB, "documents").
-		WhereEq("owner_id", ownerID).
-		WhereEq("checksum", checksum).
-		First(ctx)
+	query := "SELECT * FROM documents WHERE org_id = $org AND checksum = $checksum AND status NOT IN ['archived', 'trashed']"
+	vars := map[string]any{"org": orgID, "checksum": checksum}
+	if folderID != "" {
+		query += " AND folder_id = $folder"
+		vars["folder"] = folderID
+	}
+	items, err := queryRows[database.Document](ctx, s.DB, query+" LIMIT 1", vars)
+	if err != nil || len(items) == 0 {
+		return nil, err
+	}
+	return &items[0], nil
 }
 
 func (s *DocumentService) findByStoragePath(ctx context.Context, path string) (*database.Document, error) {

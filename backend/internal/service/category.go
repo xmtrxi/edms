@@ -37,8 +37,8 @@ type CategoryInput struct {
 
 func (s *CategoryService) List(ctx context.Context, ownerID string) ([]dto.CategoryResponse, error) {
 	results, err := surrealdb.Query[[]database.Category](ctx, s.DB,
-		"SELECT * FROM categories WHERE owner_id = $owner ORDER BY name",
-		map[string]any{"owner": ownerID},
+		"SELECT * FROM categories WHERE org_id = $org ORDER BY name",
+		map[string]any{"org": orgOf(ctx)},
 	)
 	if err != nil {
 		return nil, err
@@ -68,6 +68,7 @@ func (s *CategoryService) Create(ctx context.Context, ownerID string, in Categor
 	}
 	now := time.Now().UTC()
 	category, err := surrealdb.Create[database.Category](ctx, s.DB, "categories", &database.Category{
+		OrgID:       orgOf(ctx),
 		OwnerID:     ownerID,
 		Name:        in.Name,
 		Description: strings.TrimSpace(in.Description),
@@ -240,8 +241,8 @@ func (s *CategoryService) DocumentIDs(ctx context.Context, ownerID, categoryID s
 	ids := []string{categoryID}
 
 	children, err := surrealdb.Query[[]database.Category](ctx, s.DB,
-		"SELECT * FROM categories WHERE owner_id = $owner AND parent_id = $parent",
-		map[string]any{"owner": ownerID, "parent": categoryID},
+		"SELECT * FROM categories WHERE org_id = $org AND parent_id = $parent",
+		map[string]any{"org": orgOf(ctx), "parent": categoryID},
 	)
 	if err != nil {
 		return nil, err
@@ -283,7 +284,8 @@ func (s *CategoryService) get(ctx context.Context, ownerID, id string) (*databas
 	if err != nil {
 		return nil, err
 	}
-	if category == nil || category.OwnerID != ownerID {
+	// Categories are the organization's shared taxonomy.
+	if category == nil || category.ID == "" || category.OrgID != orgOf(ctx) {
 		return nil, ErrCategoryNotFound
 	}
 	return category, nil

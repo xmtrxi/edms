@@ -107,7 +107,11 @@ func (s *AIService) contexts(ctx context.Context, actor string, input AIInput) (
 			return nil, fmt.Errorf("document not found")
 		}
 		doc, err := surrealdb.Select[database.Document](ctx, s.db, rid)
-		if err != nil || doc == nil || doc.OwnerID != actor {
+		if err != nil || doc == nil || doc.ID == "" {
+			return nil, fmt.Errorf("document not found")
+		}
+		// The assistant only reads documents the person could open themselves.
+		if allowed, accessErr := NewAccessService(s.db).CanDocument(ctx, actor, "view", doc); accessErr != nil || !allowed {
 			return nil, fmt.Errorf("document not found")
 		}
 		extractions, err := queryRows[database.DocumentExtraction](ctx, s.db, "SELECT * FROM document_extractions WHERE document_id = $id ORDER BY updated_at DESC LIMIT 1", map[string]any{"id": id})

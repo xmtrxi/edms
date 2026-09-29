@@ -38,7 +38,7 @@ type FormsService struct{ db *surrealdb.DB }
 
 func NewFormsService(db *surrealdb.DB) *FormsService { return &FormsService{db: db} }
 func (s *FormsService) Templates(ctx context.Context) ([]database.FormTemplate, error) {
-	r, e := surrealdb.Query[[]database.FormTemplate](ctx, s.db, "SELECT * FROM form_templates WHERE status != 'archived' ORDER BY updated_at DESC", nil)
+	r, e := surrealdb.Query[[]database.FormTemplate](ctx, s.db, "SELECT * FROM form_templates WHERE org_id = $org AND status != 'archived' ORDER BY updated_at DESC", map[string]any{"org": orgOf(ctx)})
 	if e != nil || r == nil || len(*r) == 0 {
 		return nil, e
 	}
@@ -53,7 +53,7 @@ func (s *FormsService) CreateTemplate(ctx context.Context, actor string, in Form
 	if status == "" {
 		status = "draft"
 	}
-	return surrealdb.Create[database.FormTemplate](ctx, s.db, "form_templates", &database.FormTemplate{DepartmentID: in.DepartmentID, Name: strings.TrimSpace(in.Name), Description: strings.TrimSpace(in.Description), Status: status, Version: 1, Definition: in.Definition, CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
+	return surrealdb.Create[database.FormTemplate](ctx, s.db, "form_templates", &database.FormTemplate{OrgID: orgOf(ctx), DepartmentID: in.DepartmentID, Name: strings.TrimSpace(in.Name), Description: strings.TrimSpace(in.Description), Status: status, Version: 1, Definition: in.Definition, CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
 }
 func (s *FormsService) UpdateTemplate(ctx context.Context, actor, id string, in FormTemplateInput) (*database.FormTemplate, error) {
 	template, err := s.ownedTemplate(ctx, actor, id)
@@ -92,7 +92,7 @@ func (s *FormsService) Submit(ctx context.Context, actor, templateID string, in 
 		return nil, fmt.Errorf("form not found")
 	}
 	template, e := surrealdb.Select[database.FormTemplate](ctx, s.db, rid)
-	if e != nil || template == nil {
+	if e != nil || template == nil || template.OrgID != orgOf(ctx) {
 		return nil, fmt.Errorf("form not found")
 	}
 	if template.Status != "published" {
@@ -127,7 +127,7 @@ func (s *FormsService) SubmitVisitor(ctx context.Context, visitorID, templateID,
 
 func (s *FormsService) createSubmission(ctx context.Context, actor, templateID, departmentID string, values map[string]any, documentIDs []string, template *database.FormTemplate) (*database.FormSubmission, error) {
 	now := time.Now().UTC()
-	submission, e := surrealdb.Create[database.FormSubmission](ctx, s.db, "form_submissions", &database.FormSubmission{TemplateID: templateID, TemplateVersion: template.Version, DepartmentID: departmentID, SubmittedBy: actor, Status: "awaiting_approval", Values: values, Definition: template.Definition, CreatedAt: now, UpdatedAt: now})
+	submission, e := surrealdb.Create[database.FormSubmission](ctx, s.db, "form_submissions", &database.FormSubmission{OrgID: template.OrgID, TemplateID: templateID, TemplateVersion: template.Version, DepartmentID: departmentID, SubmittedBy: actor, Status: "awaiting_approval", Values: values, Definition: template.Definition, CreatedAt: now, UpdatedAt: now})
 	if e != nil {
 		return nil, e
 	}
@@ -224,7 +224,7 @@ func (s *FormsService) Comments(ctx context.Context, actor, submissionID string)
 	return queryRows[database.FormComment](ctx, s.db, "SELECT * FROM form_comments WHERE submission_id = $id ORDER BY created_at", map[string]any{"id": submissionID})
 }
 func (s *FormsService) Submissions(ctx context.Context, actor string) ([]database.FormSubmission, error) {
-	r, e := surrealdb.Query[[]database.FormSubmission](ctx, s.db, "SELECT * FROM form_submissions WHERE submitted_by = $actor ORDER BY created_at DESC", map[string]any{"actor": actor})
+	r, e := surrealdb.Query[[]database.FormSubmission](ctx, s.db, "SELECT * FROM form_submissions WHERE org_id = $org AND submitted_by = $actor ORDER BY created_at DESC", map[string]any{"actor": actor, "org": orgOf(ctx)})
 	if e != nil || r == nil || len(*r) == 0 {
 		return nil, e
 	}
@@ -345,7 +345,7 @@ func (s *FormsService) ownedTemplate(ctx context.Context, actor, id string) (*da
 		return nil, fmt.Errorf("form not found")
 	}
 	template, err := surrealdb.Select[database.FormTemplate](ctx, s.db, rid)
-	if err != nil || template == nil || template.CreatedBy != actor {
+	if err != nil || template == nil || template.CreatedBy != actor || template.OrgID != orgOf(ctx) {
 		return nil, fmt.Errorf("form not found")
 	}
 	return template, nil
@@ -369,7 +369,10 @@ func (s *FormsService) validateDocument(ctx context.Context, actor, id string) e
 		return fmt.Errorf("attached document not found")
 	}
 	document, err := surrealdb.Select[database.Document](ctx, s.db, rid)
-	if err != nil || document == nil || document.OwnerID != actor || document.Status == database.DocumentStatusArchived {
+	if err != nil || document == nil || document.ID == "" || document.Status == database.DocumentStatusArchived {
+		return fmt.Errorf("attached document not found")
+	}
+	if allowed, accessErr := NewAccessService(s.db).CanDocument(ctx, actor, "view", document); accessErr != nil || !allowed {
 		return fmt.Errorf("attached document not found")
 	}
 	return nil

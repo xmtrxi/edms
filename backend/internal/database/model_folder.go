@@ -6,6 +6,7 @@ import "time"
 // from this hierarchy, so moving a folder never moves an object in storage.
 type Folder struct {
 	ID                 RecordID  `json:"id,omitempty"`
+	OrgID              string    `json:"org_id"`
 	OwnerID            string    `json:"owner_id"`
 	ParentID           string    `json:"parent_id,omitempty"`
 	AncestorIDs        []string  `json:"ancestor_ids,omitempty"`
@@ -24,8 +25,12 @@ type Folder struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+// FolderGrant gives a principal a role on a folder and, through inheritance,
+// on its subfolders and documents. PrincipalType is one of the Principal*
+// constants; PrincipalID is EveryonePrincipalID for PrincipalEveryone.
 type FolderGrant struct {
 	ID            RecordID  `json:"id,omitempty"`
+	OrgID         string    `json:"org_id"`
 	FolderID      string    `json:"folder_id"`
 	PrincipalType string    `json:"principal_type"`
 	PrincipalID   string    `json:"principal_id"`
@@ -35,6 +40,40 @@ type FolderGrant struct {
 	CreatedBy     string    `json:"created_by"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// DocumentGrant is a grant on a single document.
+type DocumentGrant struct {
+	ID            RecordID  `json:"id,omitempty"`
+	OrgID         string    `json:"org_id"`
+	DocumentID    string    `json:"document_id"`
+	PrincipalType string    `json:"principal_type"`
+	PrincipalID   string    `json:"principal_id"`
+	Role          string    `json:"role"`
+	Allow         []string  `json:"allow,omitempty"`
+	Deny          []string  `json:"deny,omitempty"`
+	CreatedBy     string    `json:"created_by"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// Principal types a grant can target.
+const (
+	PrincipalUser       = "user"
+	PrincipalDepartment = "department"
+	PrincipalGroup      = "group"
+	PrincipalRole       = "role"
+	PrincipalEveryone   = "everyone"
+
+	EveryonePrincipalID = "*"
+)
+
+func IsPrincipalType(value string) bool {
+	switch value {
+	case PrincipalUser, PrincipalDepartment, PrincipalGroup, PrincipalRole, PrincipalEveryone:
+		return true
+	}
+	return false
 }
 
 type FolderCategory struct {

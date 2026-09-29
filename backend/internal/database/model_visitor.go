@@ -6,6 +6,7 @@ import "time"
 // not have an office account. Secrets are stored only as hashes.
 type VisitorRequest struct {
 	ID               RecordID  `json:"id,omitempty"`
+	OrgID            string    `json:"org_id"`
 	TemplateID       string    `json:"template_id"`
 	DepartmentID     string    `json:"department_id"`
 	VisitorName      string    `json:"visitor_name"`

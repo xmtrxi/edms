@@ -97,7 +97,7 @@ func NewVisitorService(cfg config.Config, db *surrealdb.DB, provider storage.Pro
 }
 
 func (s *VisitorService) List(ctx context.Context, actor string) ([]VisitorRequestView, error) {
-	results, err := surrealdb.Query[[]database.VisitorRequest](ctx, s.db, "SELECT * FROM visitor_requests WHERE created_by = $actor ORDER BY created_at DESC", map[string]any{"actor": actor})
+	results, err := surrealdb.Query[[]database.VisitorRequest](ctx, s.db, "SELECT * FROM visitor_requests WHERE org_id = $org AND created_by = $actor ORDER BY created_at DESC", map[string]any{"actor": actor, "org": orgOf(ctx)})
 	if err != nil || results == nil || len(*results) == 0 {
 		return nil, err
 	}
@@ -159,7 +159,7 @@ func (s *VisitorService) Create(ctx context.Context, actor string, in CreateVisi
 		return nil, fmt.Errorf("published form not found")
 	}
 	template, err := surrealdb.Select[database.FormTemplate](ctx, s.db, rid)
-	if err != nil || template == nil || template.Status != "published" {
+	if err != nil || template == nil || template.Status != "published" || template.OrgID != orgOf(ctx) {
 		return nil, fmt.Errorf("published form not found")
 	}
 	expiresAt := in.ExpiresAt.UTC()
@@ -175,7 +175,7 @@ func (s *VisitorService) Create(ctx context.Context, actor string, in CreateVisi
 	}
 	now := time.Now().UTC()
 	request, err := surrealdb.Create[database.VisitorRequest](ctx, s.db, "visitor_requests", &database.VisitorRequest{
-		TemplateID: in.TemplateID, DepartmentID: template.DepartmentID, VisitorName: name,
+		OrgID: template.OrgID, TemplateID: in.TemplateID, DepartmentID: template.DepartmentID, VisitorName: name,
 		VisitorEmail: email, AccessCodeHash: secretHash(accessCode), Status: "awaiting_visitor",
 		ExpiresAt: expiresAt, CreatedBy: actor, CreatedAt: now, UpdatedAt: now,
 	})

@@ -4,6 +4,7 @@ import "time"
 
 type EmailDelivery struct {
 	ID          RecordID  `json:"id,omitempty"`
+	OrgID       string    `json:"org_id,omitempty"`
 	Recipient   string    `json:"recipient"`
 	Subject     string    `json:"subject"`
 	Body        string    `json:"body,omitempty"`

@@ -27,8 +27,8 @@ func NewOperationsService(db *surrealdb.DB, smtpConfig config.SMTPConfig, queues
 	return &OperationsService{db: db, smtp: smtpConfig, queue: client}
 }
 func (s *OperationsService) Audit(ctx context.Context, action, resource string, since time.Time) ([]database.AuditEvent, error) {
-	statement := "SELECT * FROM audit_events WHERE created_at >= $since"
-	vars := map[string]any{"since": since}
+	statement := "SELECT * FROM audit_events WHERE org_id = $org AND created_at >= $since"
+	vars := map[string]any{"since": since, "org": orgOf(ctx)}
 	if action != "" {
 		statement += " AND action = $action"
 		vars["action"] = action
@@ -44,18 +44,18 @@ func (s *OperationsService) PurgeAudit(ctx context.Context, before time.Time) er
 	if before.After(time.Now().UTC().AddDate(0, -1, 0)) {
 		return fmt.Errorf("audit retention must keep at least 30 days")
 	}
-	_, err := surrealdb.Query[any](ctx, s.db, "DELETE audit_events WHERE created_at < $before", map[string]any{"before": before})
+	_, err := surrealdb.Query[any](ctx, s.db, "DELETE audit_events WHERE org_id = $org AND created_at < $before", map[string]any{"before": before, "org": orgOf(ctx)})
 	return err
 }
 func (s *OperationsService) Emails(ctx context.Context) ([]database.EmailDelivery, error) {
-	return queryRows[database.EmailDelivery](ctx, s.db, "SELECT * FROM email_deliveries ORDER BY created_at DESC LIMIT 1000", nil)
+	return queryRows[database.EmailDelivery](ctx, s.db, "SELECT * FROM email_deliveries WHERE org_id = $org ORDER BY created_at DESC LIMIT 1000", map[string]any{"org": orgOf(ctx)})
 }
 func (s *OperationsService) QueueEmail(ctx context.Context, actor, recipient, subject, body string) (*database.EmailDelivery, error) {
 	if !strings.Contains(recipient, "@") || strings.TrimSpace(subject) == "" || strings.TrimSpace(body) == "" {
 		return nil, fmt.Errorf("recipient, subject and body are required")
 	}
 	now := time.Now().UTC()
-	item, err := surrealdb.Create[database.EmailDelivery](ctx, s.db, "email_deliveries", &database.EmailDelivery{Recipient: strings.ToLower(strings.TrimSpace(recipient)), Subject: strings.TrimSpace(subject), Body: body, Status: "queued", CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
+	item, err := surrealdb.Create[database.EmailDelivery](ctx, s.db, "email_deliveries", &database.EmailDelivery{OrgID: orgOf(ctx), Recipient: strings.ToLower(strings.TrimSpace(recipient)), Subject: strings.TrimSpace(subject), Body: body, Status: "queued", CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return nil, err
 	}

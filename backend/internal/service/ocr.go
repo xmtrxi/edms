@@ -434,7 +434,7 @@ func buildSearchChunks(doc *database.Document, versionID, generationID string, s
 			DocumentID: string(doc.ID), VersionID: versionID, GenerationID: generationID,
 			ChunkIndex: len(result), Title: doc.Name, Filename: doc.OriginalName,
 			Headings: cleanStrings(item.Headings), PageNumbers: pages, PageStart: pageStart, PageEnd: pageEnd,
-			OwnerID: doc.OwnerID, FolderID: doc.FolderID, MimeType: doc.MimeType,
+			OrgID: doc.OrgID, OwnerID: doc.OwnerID, FolderID: doc.FolderID, MimeType: doc.MimeType,
 			Extension: strings.TrimPrefix(strings.ToLower(filepath.Ext(doc.OriginalName)), "."),
 			OCREngine: "docling", Status: database.DocumentStatusReady, Content: content, UpdatedAt: now,
 		})

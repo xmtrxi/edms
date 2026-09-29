@@ -54,6 +54,9 @@ func RequireAuth(auth *service.AuthService) echo.MiddlewareFunc {
 			c.Set(userKey, user)
 			c.Set(orgKey, org)
 			c.Set(membershipKey, membership)
+			c.SetRequest(c.Request().WithContext(service.WithActor(ctx, service.Actor{
+				UserID: string(user.ID), OrgID: string(org.ID), OrgRole: membership.Role, Email: user.Email,
+			})))
 			return next(c)
 		}
 	}

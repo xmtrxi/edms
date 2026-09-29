@@ -26,6 +26,11 @@ type DocumentResponse struct {
 	SharedWith        []UserResponse    `json:"shared_with,omitempty"`
 	OCR               *OCRResponse      `json:"ocr,omitempty"`
 	Category          *CategoryResponse `json:"category,omitempty"`
+	Sensitivity       string            `json:"sensitivity"`
+	// InheritPermissions is false when the document has its own access list.
+	InheritPermissions bool `json:"inherit_permissions"`
+	// Permissions lists what the signed-in user may do with the document.
+	Permissions []string `json:"permissions,omitempty"`
 }
 
 func NewDocumentResponse(d *database.Document) DocumentResponse {
@@ -33,22 +38,36 @@ func NewDocumentResponse(d *database.Document) DocumentResponse {
 		return DocumentResponse{}
 	}
 	return DocumentResponse{
-		ID:                string(d.ID),
-		Name:              d.Name,
-		OriginalName:      d.OriginalName,
-		FolderID:          d.FolderID,
-		FolderPath:        documentMetadataString(d.Metadata, "folder_path"),
-		FolderColor:       documentMetadataString(d.Metadata, "folder_color"),
-		FolderCategoryIDs: documentMetadataStringSlice(d.Metadata, "folder_category_ids"),
-		MimeType:          d.MimeType,
-		Size:              d.Size,
-		Status:            d.Status,
-		CurrentVersionID:  d.CurrentVersionID,
-		VersionCount:      d.VersionCount,
-		Metadata:          d.Metadata,
-		CreatedAt:         d.CreatedAt,
-		UpdatedAt:         d.UpdatedAt,
+		ID:                 string(d.ID),
+		Name:               d.Name,
+		OriginalName:       d.OriginalName,
+		FolderID:           d.FolderID,
+		FolderPath:         documentMetadataString(d.Metadata, "folder_path"),
+		FolderColor:        documentMetadataString(d.Metadata, "folder_color"),
+		FolderCategoryIDs:  documentMetadataStringSlice(d.Metadata, "folder_category_ids"),
+		MimeType:           d.MimeType,
+		Size:               d.Size,
+		Status:             d.Status,
+		CurrentVersionID:   d.CurrentVersionID,
+		VersionCount:       d.VersionCount,
+		Metadata:           d.Metadata,
+		CreatedAt:          d.CreatedAt,
+		UpdatedAt:          d.UpdatedAt,
+		Sensitivity:        documentSensitivity(d.Sensitivity),
+		InheritPermissions: d.InheritPermissions,
 	}
+}
+
+func documentSensitivity(value string) string {
+	if value == "" {
+		return database.SensitivityInternal
+	}
+	return value
+}
+
+func (r DocumentResponse) WithPermissions(permissions []string) DocumentResponse {
+	r.Permissions = permissions
+	return r
 }
 
 type FolderResponse struct {

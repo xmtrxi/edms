@@ -2,8 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,14 +29,21 @@ type WorkspaceService struct {
 	db      *surrealdb.DB
 	cfg     config.Config
 	storage storage.Provider
+	access  *AccessService
+	sharing *SharingService
 }
 
 func NewWorkspaceService(db *surrealdb.DB, cfg config.Config, provider storage.Provider) *WorkspaceService {
-	return &WorkspaceService{db: db, cfg: cfg, storage: provider}
+	return &WorkspaceService{db: db, cfg: cfg, storage: provider, access: NewAccessService(db), sharing: NewSharingService(cfg, db, nil)}
 }
 
 func (s *WorkspaceService) Dashboard(ctx context.Context, actor string) (*DashboardOverview, error) {
-	documents, err := queryRows[database.Document](ctx, s.db, "SELECT * FROM documents WHERE owner_id = $actor AND status != 'trashed' ORDER BY updated_at DESC LIMIT 8", map[string]any{"actor": actor})
+	scope, err := s.access.Scope(ctx, actor, orgOf(ctx))
+	if err != nil {
+		return nil, err
+	}
+	clause, vars := scope.Clause()
+	documents, err := queryRows[database.Document](ctx, s.db, "SELECT * FROM documents WHERE "+clause+" AND status != 'trashed' ORDER BY updated_at DESC LIMIT 8", vars)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +59,11 @@ func (s *WorkspaceService) Dashboard(ctx context.Context, actor string) (*Dashbo
 	if err != nil {
 		return nil, err
 	}
-	total, err := queryCount(ctx, s.db, "SELECT count() AS count FROM documents WHERE owner_id = $actor AND status != 'trashed' GROUP ALL", map[string]any{"actor": actor})
+	total, err := queryCount(ctx, s.db, "SELECT count() AS count FROM documents WHERE "+clause+" AND status != 'trashed' GROUP ALL", vars)
 	if err != nil {
 		return nil, err
 	}
-	ready, err := queryCount(ctx, s.db, "SELECT count() AS count FROM documents WHERE owner_id = $actor AND status = 'ready' GROUP ALL", map[string]any{"actor": actor})
+	ready, err := queryCount(ctx, s.db, "SELECT count() AS count FROM documents WHERE "+clause+" AND status = 'ready' GROUP ALL", vars)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +81,7 @@ func (s *WorkspaceService) Favorites(ctx context.Context, actor string) ([]datab
 	}
 	items := []database.Document{}
 	for i := range favorites {
-		if document, getErr := s.document(ctx, actor, favorites[i].DocumentID); getErr == nil {
+		if document, getErr := s.documentFor(ctx, actor, "view", favorites[i].DocumentID); getErr == nil {
 			items = append(items, *document)
 		}
 	}
@@ -84,7 +89,7 @@ func (s *WorkspaceService) Favorites(ctx context.Context, actor string) ([]datab
 }
 
 func (s *WorkspaceService) SetFavorite(ctx context.Context, actor, documentID string, favorite bool) error {
-	if _, err := s.document(ctx, actor, documentID); err != nil {
+	if _, err := s.documentFor(ctx, actor, "view", documentID); err != nil {
 		return err
 	}
 	existing, err := queryRows[database.DocumentFavorite](ctx, s.db, "SELECT * FROM document_favorites WHERE user_id = $actor AND document_id = $document LIMIT 1", map[string]any{"actor": actor, "document": documentID})
@@ -107,11 +112,27 @@ func (s *WorkspaceService) SetFavorite(ctx context.Context, actor, documentID st
 	return err
 }
 
+// Trash lists trashed documents of the organization the user could delete.
 func (s *WorkspaceService) Trash(ctx context.Context, actor string) ([]database.Document, error) {
-	return queryRows[database.Document](ctx, s.db, "SELECT * FROM documents WHERE owner_id = $actor AND status = 'trashed' ORDER BY deleted_at DESC", map[string]any{"actor": actor})
+	scope, err := s.access.Scope(ctx, actor, orgOf(ctx))
+	if err != nil {
+		return nil, err
+	}
+	clause, vars := scope.Clause()
+	candidates, err := queryRows[database.Document](ctx, s.db, "SELECT * FROM documents WHERE "+clause+" AND status = 'trashed' ORDER BY deleted_at DESC", vars)
+	if err != nil {
+		return nil, err
+	}
+	items := []database.Document{}
+	for i := range candidates {
+		if allowed, err := s.access.CanDocument(ctx, actor, "delete", &candidates[i]); err == nil && allowed {
+			items = append(items, candidates[i])
+		}
+	}
+	return items, nil
 }
 func (s *WorkspaceService) MoveToTrash(ctx context.Context, actor, id string) error {
-	doc, err := s.document(ctx, actor, id)
+	doc, err := s.documentFor(ctx, actor, "delete", id)
 	if err != nil {
 		return err
 	}
@@ -122,7 +143,7 @@ func (s *WorkspaceService) MoveToTrash(ctx context.Context, actor, id string) er
 	return err
 }
 func (s *WorkspaceService) Restore(ctx context.Context, actor, id string) error {
-	doc, err := s.document(ctx, actor, id)
+	doc, err := s.documentFor(ctx, actor, "delete", id)
 	if err != nil || doc.Status != database.DocumentStatusTrashed {
 		return fmt.Errorf("trashed document not found")
 	}
@@ -138,7 +159,7 @@ func (s *WorkspaceService) Restore(ctx context.Context, actor, id string) error 
 }
 
 func (s *WorkspaceService) PermanentlyDelete(ctx context.Context, actor, id string) error {
-	doc, err := s.document(ctx, actor, id)
+	doc, err := s.documentFor(ctx, actor, "delete", id)
 	if err != nil {
 		return err
 	}
@@ -173,6 +194,8 @@ func (s *WorkspaceService) PermanentlyDelete(ctx context.Context, actor, id stri
 		"DELETE document_favorites WHERE document_id = $document",
 		"DELETE document_categories WHERE document_id = $document",
 		"DELETE shares WHERE document_id = $document",
+		"DELETE document_grants WHERE document_id = $document",
+		"DELETE access_requests WHERE document_id = $document",
 		"DELETE documents WHERE id = $record",
 	} {
 		if _, err := surrealdb.Query[any](ctx, s.db, statement, map[string]any{"document": id, "record": mustRecordID(id)}); err != nil {
@@ -183,85 +206,13 @@ func (s *WorkspaceService) PermanentlyDelete(ctx context.Context, actor, id stri
 	return nil
 }
 
+// Shared lists documents shared with the user, including from other organizations.
 func (s *WorkspaceService) Shared(ctx context.Context, actor string) ([]database.Document, error) {
 	user, err := s.user(ctx, actor)
-	if err != nil {
-		return nil, err
+	if err != nil || user == nil {
+		return nil, fmt.Errorf("user not found")
 	}
-	shares, err := queryRows[database.Share](ctx, s.db, "SELECT * FROM shares WHERE (shared_with_user_id = $actor OR shared_with_email = $email) AND (revoked_at = NONE OR revoked_at < created_at) AND expires_at > $now", map[string]any{"actor": actor, "email": user.Email, "now": time.Now().UTC()})
-	if err != nil {
-		return nil, err
-	}
-	items := []database.Document{}
-	for i := range shares {
-		rid, parseErr := database.ParseRecordID(shares[i].DocumentID)
-		if parseErr != nil {
-			continue
-		}
-		document, selectErr := surrealdb.Select[database.Document](ctx, s.db, rid)
-		if selectErr == nil && document != nil && document.Status != database.DocumentStatusTrashed {
-			items = append(items, *document)
-		}
-	}
-	return items, nil
-}
-
-func (s *WorkspaceService) CreateShare(ctx context.Context, actor, documentID, email, permission string, expiresAt time.Time) (*database.Share, string, error) {
-	if _, err := s.document(ctx, actor, documentID); err != nil {
-		return nil, "", err
-	}
-	email = strings.ToLower(strings.TrimSpace(email))
-	if !strings.Contains(email, "@") {
-		return nil, "", fmt.Errorf("valid recipient email is required")
-	}
-	if permission == "" {
-		permission = "view"
-	}
-	if permission != "view" && permission != "download" {
-		return nil, "", fmt.Errorf("invalid share permission")
-	}
-	if expiresAt.IsZero() {
-		expiresAt = time.Now().UTC().Add(7 * 24 * time.Hour)
-	}
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return nil, "", err
-	}
-	token := base64.RawURLEncoding.EncodeToString(tokenBytes)
-	users, _ := queryRows[database.User](ctx, s.db, "SELECT * FROM users WHERE email = $email LIMIT 1", map[string]any{"email": email})
-	userID := ""
-	if len(users) > 0 {
-		userID = string(users[0].ID)
-	}
-	share, err := surrealdb.Create[database.Share](ctx, s.db, "shares", &database.Share{DocumentID: documentID, CreatedBy: actor, SharedWithUserID: userID, SharedWithEmail: email, Permission: permission, TokenHash: secretHash(token), ExpiresAt: expiresAt, CreatedAt: time.Now().UTC()})
-	if err == nil {
-		_ = writeAudit(ctx, s.db, actor, "document.shared", "document", documentID, map[string]any{"recipient": email, "permission": permission})
-	}
-	return share, token, err
-}
-func (s *WorkspaceService) DocumentShares(ctx context.Context, actor, documentID string) ([]database.Share, error) {
-	if _, err := s.document(ctx, actor, documentID); err != nil {
-		return nil, err
-	}
-	return queryRows[database.Share](ctx, s.db, "SELECT * FROM shares WHERE document_id = $document ORDER BY created_at DESC", map[string]any{"document": documentID})
-}
-func (s *WorkspaceService) RevokeShare(ctx context.Context, actor, documentID, shareID string) error {
-	if _, err := s.document(ctx, actor, documentID); err != nil {
-		return err
-	}
-	shareIDRecord, err := database.ParseRecordID(shareID)
-	if err != nil {
-		return fmt.Errorf("share not found")
-	}
-	share, err := surrealdb.Select[database.Share](ctx, s.db, shareIDRecord)
-	if err != nil || share == nil || share.DocumentID != documentID {
-		return fmt.Errorf("share not found")
-	}
-	_, err = surrealdb.Merge[database.Share](ctx, s.db, shareIDRecord, map[string]any{"revoked_at": time.Now().UTC()})
-	if err == nil {
-		_ = writeAudit(ctx, s.db, actor, "document.share_revoked", "document", documentID, map[string]any{"share_id": shareID})
-	}
-	return err
+	return s.sharing.SharedWithMe(ctx, user)
 }
 
 func (s *WorkspaceService) Workflows(ctx context.Context, actor string) ([]database.WorkflowRequest, error) {
@@ -351,13 +302,18 @@ func (s *WorkspaceService) RequestDeletion(ctx context.Context, actor string) (*
 	return item, err
 }
 func (s *WorkspaceService) LegalHolds(ctx context.Context) ([]database.LegalHold, error) {
-	return queryRows[database.LegalHold](ctx, s.db, "SELECT * FROM legal_holds ORDER BY created_at DESC", nil)
+	return queryRows[database.LegalHold](ctx, s.db, "SELECT * FROM legal_holds WHERE org_id = $org ORDER BY created_at DESC", map[string]any{"org": orgOf(ctx)})
 }
 func (s *WorkspaceService) CreateLegalHold(ctx context.Context, actor, name, reason string, documentIDs []string) (*database.LegalHold, error) {
 	if strings.TrimSpace(name) == "" || strings.TrimSpace(reason) == "" || len(documentIDs) == 0 {
 		return nil, fmt.Errorf("name, reason and documents are required")
 	}
-	item, err := surrealdb.Create[database.LegalHold](ctx, s.db, "legal_holds", &database.LegalHold{Name: strings.TrimSpace(name), Reason: strings.TrimSpace(reason), DocumentIDs: documentIDs, CreatedBy: actor, Active: true, CreatedAt: time.Now().UTC()})
+	for _, id := range documentIDs {
+		if _, err := s.documentFor(ctx, actor, "view", id); err != nil {
+			return nil, fmt.Errorf("document %s not found", id)
+		}
+	}
+	item, err := surrealdb.Create[database.LegalHold](ctx, s.db, "legal_holds", map[string]any{"org_id": orgOf(ctx), "name": strings.TrimSpace(name), "reason": strings.TrimSpace(reason), "document_ids": documentIDs, "created_by": actor, "active": true, "created_at": time.Now().UTC()})
 	if err == nil {
 		_ = writeAudit(ctx, s.db, actor, "legal_hold.created", "legal_hold", string(item.ID), map[string]any{"documents": documentIDs})
 	}
@@ -383,13 +339,17 @@ func (s *WorkspaceService) ReleaseLegalHold(ctx context.Context, actor, id strin
 	return hold, err
 }
 
-func (s *WorkspaceService) document(ctx context.Context, actor, id string) (*database.Document, error) {
+func (s *WorkspaceService) documentFor(ctx context.Context, actor, capability, id string) (*database.Document, error) {
 	rid, err := database.ParseRecordID(id)
 	if err != nil {
 		return nil, fmt.Errorf("document not found")
 	}
 	document, err := surrealdb.Select[database.Document](ctx, s.db, rid)
-	if err != nil || document == nil || document.OwnerID != actor {
+	if err != nil || document == nil || document.ID == "" {
+		return nil, fmt.Errorf("document not found")
+	}
+	allowed, err := s.access.CanDocument(ctx, actor, capability, document)
+	if err != nil || !allowed {
 		return nil, fmt.Errorf("document not found")
 	}
 	return document, nil

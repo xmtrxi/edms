@@ -10,7 +10,7 @@ import (
 
 func writeAudit(ctx context.Context, db *surrealdb.DB, actorID, action, resource, resourceID string, metadata map[string]any) error {
 	_, err := surrealdb.Create[database.AuditEvent](ctx, db, "audit_events", &database.AuditEvent{
-		ActorID: actorID, Action: action, Resource: resource, ResourceID: resourceID,
+		OrgID: orgOf(ctx), ActorID: actorID, Action: action, Resource: resource, ResourceID: resourceID,
 		Metadata: metadata, CreatedAt: time.Now().UTC(),
 	})
 	return err

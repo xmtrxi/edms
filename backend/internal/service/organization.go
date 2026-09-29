@@ -675,6 +675,28 @@ func (s *OrganizationService) membershipByID(ctx context.Context, orgID, id stri
 	return membership, nil
 }
 
+// UsersByID loads users for display, skipping ids that no longer exist.
+func (s *OrganizationService) UsersByID(ctx context.Context, ids []string) map[string]*database.User {
+	users := map[string]*database.User{}
+	for _, id := range ids {
+		if _, done := users[id]; done || id == "" {
+			continue
+		}
+		if user, err := s.userByID(ctx, id); err == nil && user != nil && user.ID != "" {
+			users[id] = user
+		}
+	}
+	return users
+}
+
+func (s *OrganizationService) userByID(ctx context.Context, id string) (*database.User, error) {
+	rid, err := database.ParseRecordID(id)
+	if err != nil {
+		return nil, err
+	}
+	return surrealdb.Select[database.User](ctx, s.db, rid)
+}
+
 func (s *OrganizationService) userByEmail(ctx context.Context, email string) (*database.User, error) {
 	items, err := queryRows[database.User](ctx, s.db, "SELECT * FROM users WHERE string::lowercase(email) = $email LIMIT 1", map[string]any{"email": strings.ToLower(strings.TrimSpace(email))})
 	if err != nil || len(items) == 0 {

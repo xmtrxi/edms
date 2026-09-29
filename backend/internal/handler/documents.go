@@ -183,10 +183,15 @@ func (h *DocumentsHandler) list(c *echo.Context) error {
 		return respondError(c, http.StatusInternalServerError, "failed to list documents")
 	}
 
+	ownerIDs := make([]string, 0, len(result.Items))
+	for i := range result.Items {
+		ownerIDs = append(ownerIDs, result.Items[i].Document.OwnerID)
+	}
+	owners := h.auth.Orgs.UsersByID(c.Request().Context(), ownerIDs)
 	items := make([]dto.DocumentResponse, 0, len(result.Items))
 	for i := range result.Items {
 		doc := result.Items[i].Document
-		items = append(items, dto.NewDocumentResponse(&doc).WithOwner(user).WithCategory(categoryFor(categories, string(doc.ID))))
+		items = append(items, dto.NewDocumentResponse(&doc).WithOwner(owners[doc.OwnerID]).WithCategory(categoryFor(categories, string(doc.ID))))
 	}
 
 	return respondJSON(c, http.StatusOK, dto.List(items, result.Total, result.Page, result.PageSize))
@@ -265,6 +270,10 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 			return respondError(c, http.StatusForbidden, "you do not have upload access to this folder")
 		}
 	}
+	access, status, message := h.uploadAccess(c, folderID)
+	if status != 0 {
+		return respondError(c, status, message)
+	}
 	if categoryID != "" {
 		if _, err := h.categories.Get(c.Request().Context(), string(user.ID), categoryID); err != nil {
 			return respondError(c, http.StatusBadRequest, "select a valid category")
@@ -277,6 +286,8 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 		}
 	}
 	doc, duplicate, err := h.docs.Upload(c.Request().Context(), service.UploadInput{
+		OrgID:             middleware.CurrentOrgID(c),
+		Access:            access,
 		OwnerID:           string(user.ID),
 		FolderID:          folderID,
 		Name:              name,
@@ -288,6 +299,9 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 		Metadata:          metadata,
 	})
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidGrant) {
+			return respondError(c, http.StatusBadRequest, err.Error())
+		}
 		return respondError(c, http.StatusInternalServerError, "failed to upload document")
 	}
 
@@ -302,11 +316,46 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 		}
 	}
 
-	response := dto.NewDocumentResponse(doc).WithOwner(user).WithCategory(category)
+	response := dto.NewDocumentResponse(doc).WithOwner(user).WithCategory(category).WithPermissions(h.permissions(c, doc))
 	if duplicate {
 		return respondJSON(c, http.StatusOK, dto.WithMessage(response, "duplicate file already exists; upload skipped"))
 	}
 	return respondJSON(c, http.StatusCreated, dto.Created(response))
+}
+
+// uploadAccess reads the optional "access" form field. Narrowing access is
+// always allowed; giving anyone else access to a file in a folder needs the
+// share capability on that folder, and guests can only upload privately or
+// following the folder. A non-zero status means the request must be refused.
+func (h *DocumentsHandler) uploadAccess(c *echo.Context, folderID string) (service.UploadAccess, int, string) {
+	var access service.UploadAccess
+	raw := strings.TrimSpace(c.FormValue("access"))
+	if raw == "" {
+		return access, 0, ""
+	}
+	if err := json.Unmarshal([]byte(raw), &access); err != nil {
+		return access, http.StatusBadRequest, "access must be a JSON object"
+	}
+	switch access.Mode {
+	case "", service.AccessModeInherit, service.AccessModePrivate:
+		access.Grants = nil
+	case service.AccessModeCustom:
+		actor, _ := service.ActorFrom(c.Request().Context())
+		if actor.IsGuest() && len(access.Grants) > 0 {
+			return access, http.StatusForbidden, "guests cannot share files"
+		}
+		if folderID != "" && len(access.Grants) > 0 {
+			if err := h.access.RequireFolder(c.Request().Context(), actor.UserID, "share", folderID); err != nil {
+				return access, http.StatusForbidden, "you can upload here, but not share files from this folder with others"
+			}
+		}
+	default:
+		return access, http.StatusBadRequest, "access mode must be inherit, private or custom"
+	}
+	if access.Sensitivity != "" && !database.IsSensitivity(access.Sensitivity) {
+		return access, http.StatusBadRequest, "unknown sensitivity label"
+	}
+	return access, 0, ""
 }
 
 func parseStringList(raw string) []string {
@@ -321,7 +370,16 @@ func parseStringList(raw string) []string {
 	return strings.Split(raw, ",")
 }
 
+// sync imports files found in storage. Storage is shared by every
+// organization on a SaaS install, so this only runs on self-hosted installs
+// and only for organization admins.
 func (h *DocumentsHandler) sync(c *echo.Context) error {
+	if h.auth.Orgs.Capabilities().IsSaaS() {
+		return respondError(c, http.StatusForbidden, "storage sync is not available on this installation")
+	}
+	if !middleware.IsOrgAdmin(c) {
+		return respondError(c, http.StatusForbidden, "only organization admins can sync storage")
+	}
 	user := middleware.CurrentUser(c)
 	workers := 4
 	if raw := c.QueryParam("workers"); raw != "" {
@@ -353,7 +411,7 @@ func (h *DocumentsHandler) get(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "request failed")
 	}
-	response := dto.NewDocumentResponse(doc).WithOwner(user).WithOCR(extraction).WithCategory(categoryFor(categories, string(doc.ID)))
+	response := dto.NewDocumentResponse(doc).WithOwner(h.owner(c, doc)).WithOCR(extraction).WithCategory(categoryFor(categories, string(doc.ID))).WithPermissions(h.permissions(c, doc))
 	return respondJSON(c, http.StatusOK, dto.OK(response))
 }
 
@@ -385,7 +443,7 @@ func (h *DocumentsHandler) setCategory(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "request failed")
 	}
-	return respondJSON(c, http.StatusOK, dto.OK(dto.NewDocumentResponse(doc).WithOwner(user).WithCategory(categoryFor(categories, string(doc.ID)))))
+	return respondJSON(c, http.StatusOK, dto.OK(dto.NewDocumentResponse(doc).WithOwner(h.owner(c, doc)).WithCategory(categoryFor(categories, string(doc.ID)))))
 }
 
 func (h *DocumentsHandler) ocr(c *echo.Context) error {
@@ -425,7 +483,7 @@ func (h *DocumentsHandler) redoOCR(c *echo.Context) error {
 	if err != nil {
 		return h.handleError(c, err)
 	}
-	return respondJSON(c, http.StatusAccepted, dto.OK(dto.NewDocumentResponse(doc).WithOwner(user)))
+	return respondJSON(c, http.StatusAccepted, dto.OK(dto.NewDocumentResponse(doc).WithOwner(h.owner(c, doc))))
 }
 
 func (h *DocumentsHandler) download(c *echo.Context) error {
@@ -485,6 +543,18 @@ func (h *DocumentsHandler) sign(c *echo.Context) error {
 		return respondError(c, http.StatusInternalServerError, "failed to save signing request")
 	}
 	return respondJSON(c, http.StatusCreated, dto.Created(request))
+}
+
+func (h *DocumentsHandler) owner(c *echo.Context, doc *database.Document) *database.User {
+	return h.auth.Orgs.UsersByID(c.Request().Context(), []string{doc.OwnerID})[doc.OwnerID]
+}
+
+func (h *DocumentsHandler) permissions(c *echo.Context, doc *database.Document) []string {
+	permissions, err := h.access.Capabilities(c.Request().Context(), actor(c), doc)
+	if err != nil {
+		return nil
+	}
+	return permissions
 }
 
 func (h *DocumentsHandler) handleError(c *echo.Context, err error) error {

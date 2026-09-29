@@ -4,6 +4,7 @@ import "time"
 
 type FormTemplate struct {
 	ID           RecordID       `json:"id,omitempty"`
+	OrgID        string         `json:"org_id"`
 	DepartmentID string         `json:"department_id"`
 	Name         string         `json:"name"`
 	Description  string         `json:"description"`
@@ -17,6 +18,7 @@ type FormTemplate struct {
 
 type FormSubmission struct {
 	ID              RecordID       `json:"id,omitempty"`
+	OrgID           string         `json:"org_id"`
 	TemplateID      string         `json:"template_id"`
 	TemplateVersion int            `json:"template_version"`
 	DepartmentID    string         `json:"department_id"`

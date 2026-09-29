@@ -47,6 +47,7 @@ type DocumentChunk struct {
 	PageNumbers  []int     `json:"page_numbers"`
 	PageStart    int       `json:"page_start"`
 	PageEnd      int       `json:"page_end"`
+	OrgID        string    `json:"org_id"`
 	OwnerID      string    `json:"owner_id"`
 	FolderID     string    `json:"folder_id"`
 	MimeType     string    `json:"mime_type"`
@@ -85,9 +86,9 @@ func (c *Client) Configure(ctx context.Context) error {
 
 func indexSettings() *meilisearch.Settings {
 	return &meilisearch.Settings{
-		FilterableAttributes: []string{"document_id", "version_id", "generation_id", "owner_id", "folder_id", "status", "mime_type", "extension", "ocr_engine"},
+		FilterableAttributes: []string{"document_id", "version_id", "generation_id", "org_id", "owner_id", "folder_id", "status", "mime_type", "extension", "ocr_engine"},
 		SearchableAttributes: []string{"title", "filename", "headings", "content"},
-		DisplayedAttributes:  []string{"id", "document_id", "version_id", "generation_id", "chunk_index", "title", "filename", "headings", "page_numbers", "page_start", "page_end", "owner_id", "folder_id", "mime_type", "extension", "ocr_engine", "status", "content", "updated_at"},
+		DisplayedAttributes:  []string{"id", "document_id", "version_id", "generation_id", "chunk_index", "title", "filename", "headings", "page_numbers", "page_start", "page_end", "org_id", "owner_id", "folder_id", "mime_type", "extension", "ocr_engine", "status", "content", "updated_at"},
 		SortableAttributes:   []string{"updated_at", "title", "page_start", "chunk_index"},
 		RankingRules:         []string{"words", "typo", "proximity", "attribute", "sort", "exactness"},
 	}
@@ -212,16 +213,24 @@ func (c *Client) waitForTask(ctx context.Context, taskUID int64) error {
 }
 
 type SearchInput struct {
-	Query      string
-	UserID     string
-	FolderIDs  []string
-	DocumentID string
-	Status     string
-	MimeType   string
-	Sort       string
-	Mode       string
-	Page       int
-	PageSize   int
+	Query  string
+	UserID string
+	// OrgID limits results to one organization. Chunks indexed before
+	// organizations existed have no org_id and stay searchable until a reindex;
+	// callers re-check access on every hit.
+	OrgID string
+	// AllInOrg skips the per-user filter (organization admins).
+	AllInOrg bool
+	// DocumentIDs are individually granted documents.
+	DocumentIDs []string
+	FolderIDs   []string
+	DocumentID  string
+	Status      string
+	MimeType    string
+	Sort        string
+	Mode        string
+	Page        int
+	PageSize    int
 }
 
 type Hit struct {
@@ -258,7 +267,7 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 	if in.Page <= 0 {
 		in.Page = 1
 	}
-	filters := []string{accessFilter(in.UserID, in.FolderIDs)}
+	filters := []string{accessFilter(in)}
 	if in.DocumentID != "" {
 		filters = append(filters, fmt.Sprintf("document_id = %s", quote(in.DocumentID)))
 	}
@@ -306,16 +315,37 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 	return &SearchResult{Hits: hits, TotalHits: res.TotalHits, Page: in.Page, PageSize: in.PageSize}, nil
 }
 
-func accessFilter(userID string, folderIDs []string) string {
-	owner := fmt.Sprintf("owner_id = %s", quote(userID))
-	if len(folderIDs) == 0 {
-		return owner
+func accessFilter(in SearchInput) string {
+	org := ""
+	if in.OrgID != "" {
+		org = fmt.Sprintf("(org_id = %s OR org_id NOT EXISTS)", quote(in.OrgID))
+		if in.AllInOrg {
+			return org
+		}
 	}
-	values := make([]string, 0, len(folderIDs))
-	for _, id := range folderIDs {
-		values = append(values, quote(id))
+	clauses := []string{fmt.Sprintf("owner_id = %s", quote(in.UserID))}
+	if len(in.FolderIDs) > 0 {
+		clauses = append(clauses, fmt.Sprintf("folder_id IN [%s]", quoteAll(in.FolderIDs)))
 	}
-	return fmt.Sprintf("(%s OR folder_id IN [%s])", owner, strings.Join(values, ","))
+	if len(in.DocumentIDs) > 0 {
+		clauses = append(clauses, fmt.Sprintf("document_id IN [%s]", quoteAll(in.DocumentIDs)))
+	}
+	visible := clauses[0]
+	if len(clauses) > 1 {
+		visible = "(" + strings.Join(clauses, " OR ") + ")"
+	}
+	if org == "" {
+		return visible
+	}
+	return org + " AND " + visible
+}
+
+func quoteAll(values []string) string {
+	quoted := make([]string, 0, len(values))
+	for _, value := range values {
+		quoted = append(quoted, quote(value))
+	}
+	return strings.Join(quoted, ",")
 }
 
 func quote(value string) string {

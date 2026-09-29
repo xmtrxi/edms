@@ -94,11 +94,15 @@ func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResu
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.listDocuments(ctx, in.OwnerID, in.Query, in.Status, in.FolderPath, in.FolderID, in.DocumentIDs, ocrIDs, in.PageSize, offset)
+	scope, err := s.access.Scope(ctx, in.OwnerID, orgOf(ctx))
 	if err != nil {
 		return nil, err
 	}
-	total, err := s.countDocuments(ctx, in.OwnerID, in.Query, in.Status, in.FolderPath, in.FolderID, in.DocumentIDs, ocrIDs)
+	items, err := s.listDocuments(ctx, scope, in.Query, in.Status, in.FolderPath, in.FolderID, in.DocumentIDs, ocrIDs, in.PageSize, offset)
+	if err != nil {
+		return nil, err
+	}
+	total, err := s.countDocuments(ctx, scope, in.Query, in.Status, in.FolderPath, in.FolderID, in.DocumentIDs, ocrIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +110,7 @@ func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResu
 }
 
 func (s *SearchService) searchMeili(ctx context.Context, in SearchInput) (*SearchResult, error) {
-	folderIDs, err := s.access.ViewableFolderIDs(ctx, in.OwnerID, "view")
+	scope, err := s.access.Scope(ctx, in.OwnerID, orgOf(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -124,14 +128,17 @@ func (s *SearchService) searchMeili(ctx context.Context, in SearchInput) (*Searc
 		}
 	}
 	res, err := s.search.Search(ctx, search.SearchInput{
-		Query:      in.Query,
-		UserID:     in.OwnerID,
-		FolderIDs:  folderIDs,
-		DocumentID: in.DocumentID,
-		Status:     in.Status,
-		Mode:       in.Mode,
-		Page:       in.Page,
-		PageSize:   in.PageSize,
+		Query:       in.Query,
+		UserID:      in.OwnerID,
+		OrgID:       scope.OrgID,
+		AllInOrg:    scope.Admin,
+		FolderIDs:   scope.FolderIDs,
+		DocumentIDs: append(append([]string{}, scope.NamedDocs...), scope.BroadDocs...),
+		DocumentID:  in.DocumentID,
+		Status:      in.Status,
+		Mode:        in.Mode,
+		Page:        in.Page,
+		PageSize:    in.PageSize,
 	})
 	if err != nil {
 		return nil, err
@@ -235,7 +242,7 @@ func (s *SearchService) chunksForIndex(ctx context.Context, doc *database.Docume
 					return nil, fmt.Errorf("decode chunk artifact: %w", err)
 				}
 				chunk.DocumentID = string(doc.ID)
-				chunk.OwnerID, chunk.FolderID, chunk.Status = doc.OwnerID, doc.FolderID, doc.Status
+				chunk.OrgID, chunk.OwnerID, chunk.FolderID, chunk.Status = doc.OrgID, doc.OwnerID, doc.FolderID, doc.Status
 				chunks = append(chunks, chunk)
 			}
 			if len(chunks) > 0 && chunks[0].VersionID == doc.CurrentVersionID {
@@ -367,12 +374,13 @@ func (s *SearchService) allDocuments(ctx context.Context) ([]database.Document, 
 	return (*results)[0].Result, nil
 }
 
-func (s *SearchService) listDocuments(ctx context.Context, ownerID, query, status, folderPath, folderID string, documentIDs, ocrIDs []string, limit, offset int) ([]SearchItem, error) {
-	sql := "SELECT * FROM documents WHERE owner_id = $owner"
-	vars := map[string]any{
-		"owner":  ownerID,
-		"limit":  limit,
-		"offset": offset,
+func (s *SearchService) listDocuments(ctx context.Context, scope *VisibleScope, query, status, folderPath, folderID string, documentIDs, ocrIDs []string, limit, offset int) ([]SearchItem, error) {
+	clause, vars := scope.Clause()
+	sql := "SELECT * FROM documents WHERE " + clause
+	vars["limit"] = limit
+	vars["offset"] = offset
+	if status == "" {
+		sql += " AND status != 'trashed'"
 	}
 	if query != "" {
 		sql += " AND (string::lowercase(name) CONTAINS $query OR string::lowercase(original_name) CONTAINS $query"
@@ -423,9 +431,12 @@ func (s *SearchService) listDocuments(ctx context.Context, ownerID, query, statu
 	return items, nil
 }
 
-func (s *SearchService) countDocuments(ctx context.Context, ownerID, query, status, folderPath, folderID string, documentIDs, ocrIDs []string) (int64, error) {
-	sql := "SELECT count() AS total FROM documents WHERE owner_id = $owner"
-	vars := map[string]any{"owner": ownerID}
+func (s *SearchService) countDocuments(ctx context.Context, scope *VisibleScope, query, status, folderPath, folderID string, documentIDs, ocrIDs []string) (int64, error) {
+	clause, vars := scope.Clause()
+	sql := "SELECT count() AS total FROM documents WHERE " + clause
+	if status == "" {
+		sql += " AND status != 'trashed'"
+	}
 	if query != "" {
 		sql += " AND (string::lowercase(name) CONTAINS $query OR string::lowercase(original_name) CONTAINS $query"
 		if len(ocrIDs) > 0 {

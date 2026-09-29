@@ -4,6 +4,7 @@ import "time"
 
 type Category struct {
 	ID          RecordID  `json:"id,omitempty"`
+	OrgID       string    `json:"org_id"`
 	OwnerID     string    `json:"owner_id"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`

@@ -17,11 +17,19 @@ var (
 	ErrFolderNotFound      = errors.New("folder not found")
 	ErrFolderNotEmpty      = errors.New("folder contains documents or subfolders")
 	ErrInvalidFolderParent = errors.New("invalid folder parent")
+	ErrFolderNameTaken     = errors.New("a folder with this name already exists here")
 )
 
-type FolderService struct{ DB *surrealdb.DB }
+// FolderService manages the organization's folder tree. Folders belong to the
+// organization; the creator is recorded but access comes from grants.
+type FolderService struct {
+	DB     *surrealdb.DB
+	access *AccessService
+}
 
-func NewFolderService(db *surrealdb.DB) *FolderService { return &FolderService{DB: db} }
+func NewFolderService(db *surrealdb.DB) *FolderService {
+	return &FolderService{DB: db, access: NewAccessService(db)}
+}
 
 type FolderInput struct {
 	Name               string
@@ -31,34 +39,74 @@ type FolderInput struct {
 	InheritPermissions bool
 }
 
-type FolderGrantInput struct {
-	PrincipalType, PrincipalID, Role string
-	Allow, Deny                      []string
-}
-
-func (s *FolderService) List(ctx context.Context, ownerID string) ([]dto.ManagedFolderResponse, error) {
-	result, err := surrealdb.Query[[]database.Folder](ctx, s.DB,
-		"SELECT * FROM folders WHERE owner_id = $owner ORDER BY depth, normalized_name",
-		map[string]any{"owner": ownerID})
+// List returns the folders the user can view, with the number of documents
+// in each that the user can see.
+func (s *FolderService) List(ctx context.Context, userID string) ([]dto.ManagedFolderResponse, error) {
+	orgID := orgOf(ctx)
+	visible, err := s.access.ViewableFolderIDs(ctx, userID, "view")
 	if err != nil {
 		return nil, err
 	}
-	folders := []database.Folder{}
-	if result != nil && len(*result) > 0 {
-		folders = (*result)[0].Result
+	if len(visible) == 0 {
+		return []dto.ManagedFolderResponse{}, nil
+	}
+	folders, err := queryRows[database.Folder](ctx, s.DB,
+		"SELECT * FROM folders WHERE org_id = $org AND <string> id INSIDE $ids ORDER BY depth, normalized_name",
+		map[string]any{"org": orgID, "ids": visible})
+	if err != nil {
+		return nil, err
+	}
+	counts, err := s.visibleCounts(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	manageable, err := s.access.ViewableFolderIDs(ctx, userID, "manage_folder")
+	if err != nil {
+		return nil, err
+	}
+	uploadable, err := s.access.ViewableFolderIDs(ctx, userID, "upload")
+	if err != nil {
+		return nil, err
 	}
 	responses := make([]dto.ManagedFolderResponse, 0, len(folders))
 	for i := range folders {
-		count, err := s.documentCount(ctx, ownerID, string(folders[i].ID))
-		if err != nil {
-			return nil, err
-		}
-		responses = append(responses, dto.NewManagedFolderResponse(&folders[i], count))
+		id := string(folders[i].ID)
+		response := dto.NewManagedFolderResponse(&folders[i], counts[id])
+		response.CanManage = slices.Contains(manageable, id)
+		response.CanUpload = slices.Contains(uploadable, id)
+		responses = append(responses, response)
 	}
 	return responses, nil
 }
 
-func (s *FolderService) Get(ctx context.Context, ownerID, id string) (*database.Folder, error) {
+func (s *FolderService) visibleCounts(ctx context.Context, userID string) (map[string]int, error) {
+	scope, err := s.access.Scope(ctx, userID, orgOf(ctx))
+	if err != nil {
+		return nil, err
+	}
+	clause, vars := scope.Clause()
+	type countRow struct {
+		FolderID string `json:"folder_id"`
+		Total    int    `json:"total"`
+	}
+	rows, err := queryRows[countRow](ctx, s.DB,
+		"SELECT folder_id, count() AS total FROM documents WHERE "+clause+" AND folder_id != NONE AND status NOT IN ['archived', 'trashed'] GROUP BY folder_id", vars)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		counts[row.FolderID] = row.Total
+	}
+	return counts, nil
+}
+
+// Get returns a folder the user can view.
+func (s *FolderService) Get(ctx context.Context, userID, id string) (*database.Folder, error) {
+	return s.getFor(ctx, userID, "view", id)
+}
+
+func (s *FolderService) getFor(ctx context.Context, userID, capability, id string) (*database.Folder, error) {
 	rid, err := database.ParseRecordID(id)
 	if err != nil {
 		return nil, ErrFolderNotFound
@@ -67,37 +115,59 @@ func (s *FolderService) Get(ctx context.Context, ownerID, id string) (*database.
 	if err != nil {
 		return nil, err
 	}
-	if folder == nil || folder.OwnerID != ownerID {
+	if folder == nil || folder.ID == "" || (folder.OrgID != "" && folder.OrgID != orgOf(ctx)) {
+		return nil, ErrFolderNotFound
+	}
+	allowed, err := s.access.CanFolder(ctx, userID, capability, id)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		if capability != "view" {
+			if visible, _ := s.access.CanFolder(ctx, userID, "view", id); visible {
+				return nil, ErrAccessDenied
+			}
+		}
 		return nil, ErrFolderNotFound
 	}
 	return folder, nil
 }
 
-func (s *FolderService) Create(ctx context.Context, ownerID string, input FolderInput) (*dto.ManagedFolderResponse, error) {
+// Create adds a folder. Top-level folders can be created by any member who is
+// not a guest; subfolders need upload access to the parent.
+func (s *FolderService) Create(ctx context.Context, userID string, input FolderInput) (*dto.ManagedFolderResponse, error) {
 	input, err := normalizeFolderInput(input)
 	if err != nil {
 		return nil, err
 	}
-	ancestors, depth, err := s.parentDetails(ctx, ownerID, "", input.ParentID)
+	actor, _ := ActorFrom(ctx)
+	if input.ParentID == "" && actor.IsGuest() {
+		return nil, ErrAccessDenied
+	}
+	ancestors, depth, err := s.parentDetails(ctx, userID, "", input.ParentID)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureUniqueName(ctx, "", input.ParentID, input.Name); err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
 	folder, err := surrealdb.Create[database.Folder](ctx, s.DB, "folders", &database.Folder{
-		OwnerID: ownerID, ParentID: input.ParentID, AncestorIDs: ancestors, Depth: depth,
+		OrgID: orgOf(ctx), OwnerID: userID, ParentID: input.ParentID, AncestorIDs: ancestors, Depth: depth,
 		Name: input.Name, NormalizedName: strings.ToLower(input.Name), Description: input.Description,
 		Color: input.Color, InheritPermissions: input.InheritPermissions, PermissionVersion: 1,
-		CreatedBy: ownerID, CreatedAt: now, UpdatedAt: now,
+		CreatedBy: userID, CreatedAt: now, UpdatedAt: now,
 	})
 	if err != nil {
 		return nil, err
 	}
 	response := dto.NewManagedFolderResponse(folder, 0)
+	response.CanManage, response.CanUpload = true, true
 	return &response, nil
 }
 
-func (s *FolderService) Update(ctx context.Context, ownerID, id string, input FolderInput) (*dto.ManagedFolderResponse, error) {
-	folder, err := s.Get(ctx, ownerID, id)
+func (s *FolderService) Update(ctx context.Context, userID, id string, input FolderInput) (*dto.ManagedFolderResponse, error) {
+	folder, err := s.getFor(ctx, userID, "manage_folder", id)
 	if err != nil {
 		return nil, err
 	}
@@ -106,67 +176,94 @@ func (s *FolderService) Update(ctx context.Context, ownerID, id string, input Fo
 		return nil, err
 	}
 	if input.ParentID != folder.ParentID {
-		if err := s.moveSubtree(ctx, ownerID, folder, input.ParentID); err != nil {
+		if err := s.moveSubtree(ctx, userID, folder, input.ParentID); err != nil {
+			return nil, err
+		}
+	}
+	if !strings.EqualFold(input.Name, folder.Name) || input.ParentID != folder.ParentID {
+		if err := s.ensureUniqueName(ctx, id, input.ParentID, input.Name); err != nil {
 			return nil, err
 		}
 	}
 	rid, _ := database.ParseRecordID(id)
-	updated, err := surrealdb.Merge[database.Folder](ctx, s.DB, rid, map[string]any{
+	if _, err := surrealdb.Merge[database.Folder](ctx, s.DB, rid, map[string]any{
 		"name": input.Name, "normalized_name": strings.ToLower(input.Name), "description": input.Description,
 		"color": input.Color, "inherit_permissions": input.InheritPermissions, "updated_at": time.Now().UTC(),
-	})
+	}); err != nil {
+		return nil, err
+	}
+	updated, err := s.Get(ctx, userID, id)
 	if err != nil {
 		return nil, err
 	}
-	count, err := s.documentCount(ctx, ownerID, id)
+	counts, err := s.visibleCounts(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	updated, err = s.Get(ctx, ownerID, string(updated.ID))
-	if err != nil {
-		return nil, err
-	}
-	response := dto.NewManagedFolderResponse(updated, count)
+	response := dto.NewManagedFolderResponse(updated, counts[id])
+	response.CanManage, response.CanUpload = true, true
 	return &response, nil
 }
 
-func (s *FolderService) ListGrants(ctx context.Context, ownerID, folderID string) ([]database.FolderGrant, error) {
-	if _, err := s.Get(ctx, ownerID, folderID); err != nil {
+// ListGrants shows everyone with access to the folder, including grants
+// inherited from parent folders. Anyone who can view the folder can see it.
+func (s *FolderService) ListGrants(ctx context.Context, userID, folderID string) ([]GrantView, error) {
+	folder, err := s.Get(ctx, userID, folderID)
+	if err != nil {
 		return nil, err
 	}
-	result, err := surrealdb.Query[[]database.FolderGrant](ctx, s.DB, "SELECT * FROM folder_grants WHERE folder_id = $folder ORDER BY created_at", map[string]any{"folder": folderID})
-	if err != nil || result == nil || len(*result) == 0 {
-		return nil, err
+	views := []GrantView{}
+	current := folder
+	for depth := 0; current != nil; depth++ {
+		grants, err := queryRows[database.FolderGrant](ctx, s.DB, "SELECT * FROM folder_grants WHERE folder_id = $folder ORDER BY created_at", map[string]any{"folder": string(current.ID)})
+		if err != nil {
+			return nil, err
+		}
+		source := "folder"
+		if depth > 0 {
+			source = "inherited"
+		}
+		for _, grant := range grants {
+			views = append(views, GrantView{ID: string(grant.ID), PrincipalType: grant.PrincipalType, PrincipalID: grant.PrincipalID, Role: grant.Role, Allow: grant.Allow, Deny: grant.Deny, Source: source, SourceName: current.Name})
+		}
+		if current.ParentID == "" || !current.InheritPermissions {
+			break
+		}
+		if current, err = s.access.folder(ctx, current.ParentID); err != nil {
+			return nil, err
+		}
 	}
-	return (*result)[0].Result, nil
+	return views, nil
 }
 
-func (s *FolderService) UpsertGrant(ctx context.Context, ownerID, folderID string, input FolderGrantInput) (*database.FolderGrant, error) {
-	if _, err := s.Get(ctx, ownerID, folderID); err != nil {
+// UpsertGrant adds or changes a grant. Sharing a folder needs the share capability.
+func (s *FolderService) UpsertGrant(ctx context.Context, userID, folderID string, input GrantInput) (*database.FolderGrant, error) {
+	folder, err := s.getFor(ctx, userID, "share", folderID)
+	if err != nil {
 		return nil, err
 	}
-	input.PrincipalType, input.PrincipalID, input.Role = strings.TrimSpace(input.PrincipalType), strings.TrimSpace(input.PrincipalID), strings.TrimSpace(input.Role)
-	if (input.PrincipalType != "user" && input.PrincipalType != "department") || input.PrincipalID == "" {
-		return nil, errors.New("select a user or department")
+	input, err = normalizeGrant(ctx, s.DB, folder.OrgID, input, false)
+	if err != nil {
+		return nil, err
 	}
-	if _, ok := roleCapabilities[input.Role]; !ok {
-		return nil, errors.New("select a valid role")
-	}
-	result, err := surrealdb.Query[[]database.FolderGrant](ctx, s.DB, "SELECT * FROM folder_grants WHERE folder_id = $folder AND principal_type = $type AND principal_id = $principal LIMIT 1", map[string]any{"folder": folderID, "type": input.PrincipalType, "principal": input.PrincipalID})
+	existing, err := queryRows[database.FolderGrant](ctx, s.DB, "SELECT * FROM folder_grants WHERE folder_id = $folder AND principal_type = $type AND principal_id = $principal LIMIT 1", map[string]any{"folder": folderID, "type": input.PrincipalType, "principal": input.PrincipalID})
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if result != nil && len(*result) > 0 && len((*result)[0].Result) > 0 {
-		grant := (*result)[0].Result[0]
-		rid, _ := database.ParseRecordID(string(grant.ID))
-		return surrealdb.Merge[database.FolderGrant](ctx, s.DB, rid, map[string]any{"role": input.Role, "allow": input.Allow, "deny": input.Deny, "updated_at": now})
+	if len(existing) > 0 {
+		rid, _ := database.ParseRecordID(string(existing[0].ID))
+		return surrealdb.Merge[database.FolderGrant](ctx, s.DB, rid, map[string]any{"role": input.Role, "allow": nonNil(input.Allow), "deny": nonNil(input.Deny), "updated_at": now})
 	}
-	return surrealdb.Create[database.FolderGrant](ctx, s.DB, "folder_grants", &database.FolderGrant{FolderID: folderID, PrincipalType: input.PrincipalType, PrincipalID: input.PrincipalID, Role: input.Role, Allow: input.Allow, Deny: input.Deny, CreatedBy: ownerID, CreatedAt: now, UpdatedAt: now})
+	grant, err := surrealdb.Create[database.FolderGrant](ctx, s.DB, "folder_grants", &database.FolderGrant{OrgID: folder.OrgID, FolderID: folderID, PrincipalType: input.PrincipalType, PrincipalID: input.PrincipalID, Role: input.Role, Allow: nonNil(input.Allow), Deny: nonNil(input.Deny), CreatedBy: userID, CreatedAt: now, UpdatedAt: now})
+	if err == nil {
+		_ = writeAudit(ctx, s.DB, userID, "folder.shared", "folder", folderID, map[string]any{"principal_type": input.PrincipalType, "principal_id": input.PrincipalID, "role": input.Role})
+	}
+	return grant, err
 }
 
-func (s *FolderService) DeleteGrant(ctx context.Context, ownerID, folderID, grantID string) error {
-	if _, err := s.Get(ctx, ownerID, folderID); err != nil {
+func (s *FolderService) DeleteGrant(ctx context.Context, userID, folderID, grantID string) error {
+	if _, err := s.getFor(ctx, userID, "share", folderID); err != nil {
 		return err
 	}
 	rid, err := database.ParseRecordID(grantID)
@@ -180,23 +277,23 @@ func (s *FolderService) DeleteGrant(ctx context.Context, ownerID, folderID, gran
 	if grant == nil || grant.FolderID != folderID {
 		return ErrFolderNotFound
 	}
-	_, err = surrealdb.Delete[database.FolderGrant](ctx, s.DB, rid)
-	return err
+	if _, err = surrealdb.Delete[database.FolderGrant](ctx, s.DB, rid); err != nil {
+		return err
+	}
+	_ = writeAudit(ctx, s.DB, userID, "folder.unshared", "folder", folderID, map[string]any{"principal_type": grant.PrincipalType, "principal_id": grant.PrincipalID})
+	return nil
 }
 
-func (s *FolderService) moveSubtree(ctx context.Context, ownerID string, folder *database.Folder, parentID string) error {
-	ancestors, depth, err := s.parentDetails(ctx, ownerID, string(folder.ID), parentID)
+func (s *FolderService) moveSubtree(ctx context.Context, userID string, folder *database.Folder, parentID string) error {
+	ancestors, depth, err := s.parentDetails(ctx, userID, string(folder.ID), parentID)
 	if err != nil {
 		return err
 	}
-	result, err := surrealdb.Query[[]database.Folder](ctx, s.DB, "SELECT * FROM folders WHERE owner_id = $owner AND $id INSIDE ancestor_ids", map[string]any{"owner": ownerID, "id": string(folder.ID)})
+	descendants, err := queryRows[database.Folder](ctx, s.DB, "SELECT * FROM folders WHERE org_id = $org AND $id INSIDE ancestor_ids", map[string]any{"org": folder.OrgID, "id": string(folder.ID)})
 	if err != nil {
 		return err
 	}
-	items := []database.Folder{*folder}
-	if result != nil && len(*result) > 0 {
-		items = append(items, (*result)[0].Result...)
-	}
+	items := append([]database.Folder{*folder}, descendants...)
 	for _, item := range items {
 		itemAncestors, itemDepth, itemParent := ancestors, depth, parentID
 		if string(item.ID) != string(folder.ID) {
@@ -216,23 +313,27 @@ func (s *FolderService) moveSubtree(ctx context.Context, ownerID string, folder 
 	return nil
 }
 
-func (s *FolderService) Delete(ctx context.Context, ownerID, id string) error {
-	if _, err := s.Get(ctx, ownerID, id); err != nil {
+func (s *FolderService) Delete(ctx context.Context, userID, id string) error {
+	if _, err := s.getFor(ctx, userID, "manage_folder", id); err != nil {
 		return err
 	}
-	children, err := surrealdb.Query[[]database.Folder](ctx, s.DB, "SELECT * FROM folders WHERE parent_id = $parent LIMIT 1", map[string]any{"parent": id})
+	children, err := queryRows[database.Folder](ctx, s.DB, "SELECT * FROM folders WHERE parent_id = $parent LIMIT 1", map[string]any{"parent": id})
 	if err != nil {
 		return err
 	}
-	count, err := s.documentCount(ctx, ownerID, id)
+	// Every document counts here, including ones this user cannot see.
+	count, err := queryCount(ctx, s.DB, "SELECT count() AS count FROM documents WHERE folder_id = $folder AND status != 'trashed' GROUP ALL", map[string]any{"folder": id})
 	if err != nil {
 		return err
 	}
-	if count > 0 || (children != nil && len(*children) > 0 && len((*children)[0].Result) > 0) {
+	if count > 0 || len(children) > 0 {
 		return ErrFolderNotEmpty
 	}
 	rid, _ := database.ParseRecordID(id)
-	_, err = surrealdb.Delete[database.Folder](ctx, s.DB, rid)
+	if _, err = surrealdb.Delete[database.Folder](ctx, s.DB, rid); err != nil {
+		return err
+	}
+	_, err = surrealdb.Query[any](ctx, s.DB, "DELETE folder_grants WHERE folder_id = $folder", map[string]any{"folder": id})
 	return err
 }
 
@@ -250,15 +351,41 @@ func normalizeFolderInput(input FolderInput) (FolderInput, error) {
 	return input, nil
 }
 
-func (s *FolderService) parentDetails(ctx context.Context, ownerID, folderID, parentID string) ([]string, int, error) {
+func (s *FolderService) ensureUniqueName(ctx context.Context, folderID, parentID, name string) error {
+	query := "SELECT * FROM folders WHERE org_id = $org AND normalized_name = $name AND "
+	vars := map[string]any{"org": orgOf(ctx), "name": strings.ToLower(name)}
+	if parentID == "" {
+		query += "(parent_id = NONE OR parent_id = '')"
+	} else {
+		query += "parent_id = $parent"
+		vars["parent"] = parentID
+	}
+	existing, err := queryRows[database.Folder](ctx, s.DB, query+" LIMIT 2", vars)
+	if err != nil {
+		return err
+	}
+	for _, folder := range existing {
+		if string(folder.ID) != folderID {
+			return ErrFolderNameTaken
+		}
+	}
+	return nil
+}
+
+// parentDetails validates a new parent: it must be in the organization, the
+// user must be able to add to it, and it cannot be the folder or a descendant.
+func (s *FolderService) parentDetails(ctx context.Context, userID, folderID, parentID string) ([]string, int, error) {
 	if parentID == "" {
 		return nil, 0, nil
 	}
 	if parentID == folderID {
 		return nil, 0, ErrInvalidFolderParent
 	}
-	parent, err := s.Get(ctx, ownerID, parentID)
+	parent, err := s.getFor(ctx, userID, "upload", parentID)
 	if err != nil {
+		if errors.Is(err, ErrAccessDenied) {
+			return nil, 0, err
+		}
 		return nil, 0, ErrInvalidFolderParent
 	}
 	for _, ancestorID := range parent.AncestorIDs {
@@ -268,24 +395,4 @@ func (s *FolderService) parentDetails(ctx context.Context, ownerID, folderID, pa
 	}
 	ancestors := append(append([]string{}, parent.AncestorIDs...), parentID)
 	return ancestors, parent.Depth + 1, nil
-}
-
-func (s *FolderService) documentCount(ctx context.Context, ownerID, folderID string) (int, error) {
-	result, err := surrealdb.Query[[]map[string]any](ctx, s.DB,
-		"SELECT count() AS total FROM documents WHERE owner_id = $owner AND folder_id = $folder GROUP ALL",
-		map[string]any{"owner": ownerID, "folder": folderID})
-	if err != nil || result == nil || len(*result) == 0 || len((*result)[0].Result) == 0 {
-		return 0, err
-	}
-	switch total := (*result)[0].Result[0]["total"].(type) {
-	case int64:
-		return int(total), nil
-	case int:
-		return total, nil
-	case uint64:
-		return int(total), nil
-	case float64:
-		return int(total), nil
-	}
-	return 0, nil
 }

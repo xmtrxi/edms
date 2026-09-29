@@ -67,7 +67,36 @@ func DocumentStoragePath(docID, filename string) string {
 	return filepath.ToSlash(filepath.Join("documents", docID, "original"+filepath.Ext(filename)))
 }
 
+// OrgDocumentStoragePath keeps each organization's files under its own prefix,
+// so storage can be audited, exported or moved per organization.
+func OrgDocumentStoragePath(orgID, docID, filename string) string {
+	if orgID == "" {
+		return DocumentStoragePath(docID, filename)
+	}
+	_, key, ok := strings.Cut(orgID, ":")
+	if !ok || key == "" {
+		key = orgID
+	}
+	return filepath.ToSlash(filepath.Join("orgs", key, DocumentStoragePath(docID, filename)))
+}
+
+// UploadAccess is who can see a new document. Mode "inherit" (the default)
+// follows the folder, "private" is only the uploader, and "custom" uses Grants.
+type UploadAccess struct {
+	Mode        string       `json:"mode"`
+	Sensitivity string       `json:"sensitivity"`
+	Grants      []GrantInput `json:"grants"`
+}
+
+const (
+	AccessModeInherit = "inherit"
+	AccessModePrivate = "private"
+	AccessModeCustom  = "custom"
+)
+
 type UploadInput struct {
+	OrgID             string
+	Access            UploadAccess
 	OwnerID           string
 	FolderID          string
 	Name              string
@@ -102,15 +131,25 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	// race where two concurrent requests upload the same bytes before either row
 	// exists. Backfilling also protects documents created before checksums were
 	// introduced.
+	if in.OrgID == "" {
+		in.OrgID = orgOf(ctx)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.backfillMissingChecksums(ctx, in.OwnerID); err != nil {
+	if err := s.backfillMissingChecksums(ctx, in.OrgID); err != nil {
 		return nil, false, fmt.Errorf("backfill document checksums: %w", err)
 	}
 
-	existing, err := s.findByChecksum(ctx, in.OwnerID, checksum)
+	existing, err := s.findByChecksum(ctx, in.OrgID, in.FolderID, checksum)
 	if err != nil {
 		return nil, false, fmt.Errorf("check duplicate: %w", err)
+	}
+	// Only report a duplicate the uploader can already see; otherwise the
+	// response would reveal a document they have no access to.
+	if existing != nil {
+		if visible, err := s.access.CanDocument(ctx, in.OwnerID, "view", existing); err != nil || !visible {
+			existing = nil
+		}
 	}
 	if existing != nil {
 		// The bytes already exist, so never create another row or send them
@@ -123,33 +162,51 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 
 	docID := newDocumentID()
 	now := time.Now().UTC()
-	storagePath := DocumentStoragePath(docID, in.Name)
+	storagePath := OrgDocumentStoragePath(in.OrgID, docID, in.Name)
+	sensitivity := in.Access.Sensitivity
+	if !database.IsSensitivity(sensitivity) {
+		sensitivity = database.SensitivityInternal
+	}
+	inherit := (in.Access.Mode == "" || in.Access.Mode == AccessModeInherit) && sensitivity != database.SensitivityRestricted
 
 	doc := &database.Document{
-		ID:              database.RecordID(docID),
-		OwnerID:         in.OwnerID,
-		FolderID:        in.FolderID,
-		Name:            in.Name,
-		OriginalName:    in.Name,
-		MimeType:        in.MimeType,
-		Size:            size,
-		StorageProvider: s.cfg.StorageProvider,
-		StoragePath:     storagePath,
-		Checksum:        checksum,
-		Status:          database.DocumentStatusUploaded,
-		Metadata:        generatedMetadata(in.Name, storagePath, checksum, folderMetadata(in.Metadata, in.FolderPath, in.FolderColor, in.FolderCategoryIDs)),
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		ID:                 database.RecordID(docID),
+		OrgID:              in.OrgID,
+		InheritPermissions: inherit,
+		Sensitivity:        sensitivity,
+		OwnerID:            in.OwnerID,
+		FolderID:           in.FolderID,
+		Name:               in.Name,
+		OriginalName:       in.Name,
+		MimeType:           in.MimeType,
+		Size:               size,
+		StorageProvider:    s.cfg.StorageProvider,
+		StoragePath:        storagePath,
+		Checksum:           checksum,
+		Status:             database.DocumentStatusUploaded,
+		Metadata:           generatedMetadata(in.Name, storagePath, checksum, folderMetadata(in.Metadata, in.FolderPath, in.FolderColor, in.FolderCategoryIDs)),
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 
 	if err := s.storage.Upload(ctx, storagePath, temp); err != nil {
 		return nil, false, fmt.Errorf("store file: %w", err)
 	}
 
-	created, err := surrealdb.Create[database.Document](ctx, s.DB, "documents", doc)
+	created, err := surrealdb.Create[database.Document](ctx, s.DB, "documents", documentRecord(doc))
 	if err != nil {
 		_ = s.storage.Delete(ctx, storagePath)
 		return nil, false, fmt.Errorf("create document record: %w", err)
+	}
+	if in.Access.Mode == AccessModeCustom {
+		for _, grant := range in.Access.Grants {
+			if _, err := upsertDocumentGrant(ctx, s.DB, created, in.OwnerID, grant); err != nil {
+				_ = s.storage.Delete(ctx, storagePath)
+				rid, _ := database.ParseRecordID(string(created.ID))
+				_, _ = surrealdb.Delete[database.Document](ctx, s.DB, rid)
+				return nil, false, err
+			}
+		}
 	}
 	version, err := createInitialVersion(ctx, s.DB, created, in.OwnerID, database.VersionSourceUpload)
 	if err != nil {
@@ -165,9 +222,13 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 // Folders derives a SharePoint-like folder tree from document metadata. It
 // includes ancestor folders so a deep storage path can be browsed naturally.
 func (s *DocumentService) Folders(ctx context.Context, ownerID string) ([]dto.FolderResponse, error) {
+	scope, err := s.access.Scope(ctx, ownerID, orgOf(ctx))
+	if err != nil {
+		return nil, err
+	}
+	clause, vars := scope.Clause()
 	results, err := surrealdb.Query[[]database.Document](ctx, s.DB,
-		"SELECT * FROM documents WHERE owner_id = $owner AND status != 'archived' ORDER BY updated_at DESC",
-		map[string]any{"owner": ownerID})
+		"SELECT * FROM documents WHERE "+clause+" AND status NOT IN ['archived', 'trashed'] ORDER BY updated_at DESC", vars)
 	if err != nil {
 		return nil, err
 	}
@@ -327,7 +388,15 @@ func (s *DocumentService) GetFor(ctx context.Context, userID, capability, id str
 		return nil, err
 	}
 	if !allowed {
-		return nil, ErrForbidden
+		// Only confirm that a document exists to members of its organization,
+		// who may then request access; everyone else gets "not found".
+		if doc.OrgID != "" && doc.OrgID == orgOf(ctx) {
+			return nil, ErrForbidden
+		}
+		if visible, _ := s.access.CanDocument(ctx, userID, "view", doc); visible {
+			return nil, ErrForbidden
+		}
+		return nil, ErrDocumentNotFound
 	}
 	return doc, nil
 }
@@ -397,6 +466,25 @@ func (s *DocumentService) Download(ctx context.Context, ownerID, id string) (*da
 		return nil, nil, fmt.Errorf("download file: %w", err)
 	}
 	return doc, reader, nil
+}
+
+// documentRecord is the document as a map for Create. A struct would send the
+// zero deleted_at as NULL, which the optional datetime column rejects.
+func documentRecord(doc *database.Document) map[string]any {
+	record := map[string]any{
+		"id": doc.ID, "org_id": doc.OrgID, "owner_id": doc.OwnerID, "name": doc.Name, "original_name": doc.OriginalName,
+		"mime_type": doc.MimeType, "size": doc.Size, "storage_provider": doc.StorageProvider, "storage_path": doc.StoragePath,
+		"checksum": doc.Checksum, "status": doc.Status, "version_count": doc.VersionCount, "metadata": doc.Metadata,
+		"inherit_permissions": doc.InheritPermissions, "sensitivity": doc.Sensitivity,
+		"created_at": doc.CreatedAt, "updated_at": doc.UpdatedAt,
+	}
+	if doc.FolderID != "" {
+		record["folder_id"] = doc.FolderID
+	}
+	if doc.CurrentVersionID != "" {
+		record["current_version_id"] = doc.CurrentVersionID
+	}
+	return record
 }
 
 func (s *DocumentService) Delete(ctx context.Context, ownerID, id string) error {

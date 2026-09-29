@@ -72,12 +72,19 @@ func (h *SearchHandler) search(c *echo.Context) error {
 		return respondError(c, http.StatusInternalServerError, "search failed")
 	}
 
+	ownerIDs := make([]string, 0, len(result.Items))
+	for i := range result.Items {
+		ownerIDs = append(ownerIDs, result.Items[i].Document.OwnerID)
+	}
+	owners := h.auth.Orgs.UsersByID(c.Request().Context(), ownerIDs)
 	items := make([]dto.SearchResultResponse, 0, len(result.Items))
 	for i := range result.Items {
 		item := result.Items[i]
 		response := dto.NewSearchResultResponse(&item.Document, item.Snippet, item.Passage.VersionID, item.Passage.ChunkIndex, item.Passage.Headings, item.Passage.PageNumbers, item.Passage.PageStart, item.Passage.PageEnd)
 		if item.Document.OwnerID == string(user.ID) {
 			response.DocumentResponse = response.DocumentResponse.WithOwner(user)
+		} else if owner := owners[item.Document.OwnerID]; owner != nil {
+			response.DocumentResponse = response.DocumentResponse.WithOwner(owner)
 		}
 		items = append(items, response)
 	}
