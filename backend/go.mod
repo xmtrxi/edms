@@ -7,9 +7,11 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.43.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.33
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.106.3
+	github.com/casbin/casbin/v3 v3.11.0
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/hibiken/asynq v0.26.0
+	github.com/hibiken/asynqmon v0.7.2
 	github.com/kemboi22/surreal-go-orm v0.0.0-20260917093316-b4651f508e9e
 	github.com/labstack/echo/v5 v5.3.1
 	github.com/meilisearch/meilisearch-go v0.36.3
@@ -18,6 +20,7 @@ require (
 	github.com/surrealdb/surrealdb.go v1.6.0
 	github.com/valkey-io/valkey-go v1.0.76
 	golang.org/x/crypto v0.54.0
+	golang.org/x/net v0.57.0
 )
 
 require (
@@ -35,7 +38,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.35 // indirect
 	github.com/aws/smithy-go v1.27.6 // indirect
 	github.com/bmatcuk/doublestar/v4 v4.6.1 // indirect
-	github.com/casbin/casbin/v3 v3.11.0 // indirect
 	github.com/casbin/govaluate v1.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
@@ -44,7 +46,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/hibiken/asynqmon v0.7.2 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/microsoft/kiota-abstractions-go v1.9.4 // indirect
 	github.com/microsoft/kiota-http-go v1.5.6 // indirect
@@ -64,7 +65,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

@@ -23,14 +23,16 @@ var (
 )
 
 type AuthService struct {
-	cfg  config.Config
-	DB   *surrealdb.DB
-	log  *slog.Logger
-	Orgs *OrganizationService
+	cfg    config.Config
+	DB     *surrealdb.DB
+	log    *slog.Logger
+	Orgs   *OrganizationService
+	Tokens *TokenService
 }
 
 func NewAuthService(cfg config.Config, db *surrealdb.DB, logger *slog.Logger) *AuthService {
-	return &AuthService{cfg: cfg, DB: db, log: logger, Orgs: NewOrganizationService(cfg, db, logger)}
+	orgs := NewOrganizationService(cfg, db, logger)
+	return &AuthService{cfg: cfg, DB: db, log: logger, Orgs: orgs, Tokens: NewTokenService(db, orgs)}
 }
 
 // TokenClaims identifies the user and the organization the session acts in.

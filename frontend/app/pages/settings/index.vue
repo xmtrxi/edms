@@ -3,6 +3,7 @@
   import { onMounted, reactive } from "vue";
   import { toast } from "vue-sonner";
 
+  import ApiTokensPanel from "@/components/settings/ApiTokensPanel.vue";
   import StorageSyncPanel from "@/components/settings/StorageSyncPanel.vue";
 
   definePageMeta({
@@ -93,6 +94,7 @@
         }}</Button
       >
     </div>
+    <ApiTokensPanel />
     <StorageSyncPanel v-if="auth.isOrgAdmin && auth.meta?.mode !== 'saas'" />
   </div>
 </template>

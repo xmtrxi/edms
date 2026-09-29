@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v5"
 
@@ -33,6 +34,9 @@ func (h *AuthHandler) RegisterRoutes(api *echo.Group) {
 	authed.POST("/auth/switch-org", h.switchOrganization)
 	authed.POST("/invitations/accept", h.acceptInvitation)
 	authed.GET("/users", h.users)
+	authed.GET("/tokens", h.listTokens)
+	authed.POST("/tokens", h.createToken)
+	authed.DELETE("/tokens/:id", h.revokeToken)
 }
 
 // meta describes the deployment so the frontend can show or hide signup,
@@ -228,4 +232,56 @@ func (h *AuthHandler) users(c *echo.Context) error {
 		items = append(items, dto.NewUserResponse(&users[i]))
 	}
 	return respondJSON(c, http.StatusOK, dto.List(items, int64(len(items)), 1, len(items)))
+}
+
+type tokenResponse struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Prefix     string    `json:"prefix"`
+	Scopes     []string  `json:"scopes"`
+	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	// Secret is only returned when the token is created.
+	Secret string `json:"secret,omitempty"`
+}
+
+func newTokenResponse(token *database.APIToken, secret string) tokenResponse {
+	return tokenResponse{ID: string(token.ID), Name: token.Name, Prefix: token.Prefix, Scopes: token.Scopes,
+		LastUsedAt: token.LastUsedAt, ExpiresAt: token.ExpiresAt, CreatedAt: token.CreatedAt, Secret: secret}
+}
+
+func (h *AuthHandler) listTokens(c *echo.Context) error {
+	tokens, err := h.service.Tokens.List(c.Request().Context(), string(middleware.CurrentUser(c).ID), middleware.CurrentOrgID(c))
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "failed to list tokens")
+	}
+	items := make([]tokenResponse, 0, len(tokens))
+	for i := range tokens {
+		items = append(items, newTokenResponse(&tokens[i], ""))
+	}
+	return respondJSON(c, http.StatusOK, dto.List(items, int64(len(items)), 1, len(items)))
+}
+
+// createToken needs a signed-in session: a token cannot mint more tokens.
+func (h *AuthHandler) createToken(c *echo.Context) error {
+	if middleware.CurrentAPIToken(c) != nil {
+		return respondError(c, http.StatusForbidden, "sign in to create tokens")
+	}
+	var r service.TokenInput
+	if err := bind(c, &r); err != nil {
+		return err
+	}
+	token, secret, err := h.service.Tokens.Create(c.Request().Context(), string(middleware.CurrentUser(c).ID), middleware.CurrentOrgID(c), r)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(newTokenResponse(token, secret)))
+}
+
+func (h *AuthHandler) revokeToken(c *echo.Context) error {
+	if err := h.service.Tokens.Revoke(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id")); err != nil {
+		return respondError(c, http.StatusNotFound, "token not found")
+	}
+	return c.NoContent(http.StatusNoContent)
 }

@@ -15,6 +15,7 @@ const (
 	userKey       = "edms.user"
 	orgKey        = "edms.org"
 	membershipKey = "edms.membership"
+	tokenKey      = "edms.api_token"
 )
 
 // RequireAuth authenticates the bearer token and resolves the organization the
@@ -32,15 +33,31 @@ func RequireAuth(auth *service.AuthService) echo.MiddlewareFunc {
 				return echo.NewHTTPError(http.StatusUnauthorized, "missing bearer token")
 			}
 
-			claims, err := auth.ParseToken(strings.TrimPrefix(header, "Bearer "))
-			if err != nil || claims.UserID == "" {
-				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
-			}
-
 			ctx := c.Request().Context()
-			user, err := auth.UserByID(ctx, claims.UserID)
-			if err != nil || user == nil || user.Status != database.UserStatusActive {
-				return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+			bearer := strings.TrimPrefix(header, "Bearer ")
+			var claims service.TokenClaims
+			var user *database.User
+			if strings.HasPrefix(bearer, service.APITokenPrefix) {
+				// Personal access token: fixed organization, limited scopes.
+				token, tokenUser, err := auth.Tokens.Authenticate(ctx, bearer)
+				if err != nil {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+				}
+				if !safeMethod(c.Request().Method) && !service.HasScope(token, service.ScopeWrite) {
+					return echo.NewHTTPError(http.StatusForbidden, "this token is read-only")
+				}
+				claims, user = service.TokenClaims{UserID: string(tokenUser.ID), OrgID: token.OrgID}, tokenUser
+				c.Set(tokenKey, token)
+			} else {
+				parsed, err := auth.ParseToken(bearer)
+				if err != nil || parsed.UserID == "" {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+				}
+				claims = parsed
+				user, err = auth.UserByID(ctx, claims.UserID)
+				if err != nil || user == nil || user.Status != database.UserStatusActive {
+					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
+				}
 			}
 
 			org, membership, err := auth.Orgs.Resolve(ctx, user, claims.OrgID)
@@ -91,4 +108,18 @@ func CurrentMembership(c *echo.Context) *database.Membership {
 func IsOrgAdmin(c *echo.Context) bool {
 	membership := CurrentMembership(c)
 	return membership != nil && (membership.Role == database.MembershipRoleOwner || membership.Role == database.MembershipRoleAdmin)
+}
+
+// CurrentAPIToken is the personal access token used for this request, if any.
+func CurrentAPIToken(c *echo.Context) *database.APIToken {
+	token, _ := c.Get(tokenKey).(*database.APIToken)
+	return token
+}
+
+func safeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, "PROPFIND":
+		return true
+	}
+	return false
 }

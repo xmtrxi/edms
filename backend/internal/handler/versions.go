@@ -24,6 +24,7 @@ func NewVersionsHandler(deps Deps) *VersionsHandler {
 func (h *VersionsHandler) RegisterRoutes(api *echo.Group) {
 	g := api.Group("/documents", middleware.RequireAuth(h.auth))
 	g.GET("/:id/versions", h.list)
+	g.POST("/:id/versions", h.upload)
 	g.GET("/:id/versions/:versionId/download", h.download)
 	g.POST("/:id/versions/:versionId/restore", h.restore)
 	g.GET("/:id/contributors", h.contributors)
@@ -87,4 +88,27 @@ func (h *VersionsHandler) handleError(c *echo.Context, err error) error {
 	default:
 		return respondError(c, http.StatusInternalServerError, "version request failed")
 	}
+}
+
+// upload stores a multipart "file" as a new version of the document.
+func (h *VersionsHandler) upload(c *echo.Context) error {
+	file, err := c.FormFile("file")
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "a file is required")
+	}
+	src, err := file.Open()
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "could not read uploaded file")
+	}
+	defer src.Close()
+	version, created, err := h.versions.AddVersion(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id"), service.NewVersionInput{
+		File: src, FileName: file.Filename, MimeType: file.Header.Get("Content-Type"), Summary: c.FormValue("summary"),
+	})
+	if err != nil {
+		return h.handleError(c, err)
+	}
+	if !created {
+		return respondJSON(c, http.StatusOK, dto.WithMessage(dto.NewDocumentVersionResponse(version), "the file is identical to the current version"))
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(dto.NewDocumentVersionResponse(version)))
 }

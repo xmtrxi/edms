@@ -68,6 +68,8 @@ func (s *Server) registerTaskRoutes() {
 func (s *Server) registerRoutes(deps handler.Deps) {
 	handler.NewDocsHandler().RegisterRoutes(s.echo)
 
+	handler.NewWebDAVHandler(deps).Register(s.echo)
+
 	api := s.echo.Group("/api")
 	handler.NewHealthHandler(deps).RegisterRoutes(s.echo, api)
 	handler.NewAuthHandler(deps).RegisterRoutes(api)

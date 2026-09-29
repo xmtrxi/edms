@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/surrealdb/surrealdb.go"
@@ -105,6 +109,116 @@ func (s *VersionService) Download(ctx context.Context, ownerID, documentID, vers
 	}
 	reader, err := s.storage.Download(ctx, version.StoragePath)
 	return version, reader, err
+}
+
+// NewVersionInput is a new revision of an existing document.
+type NewVersionInput struct {
+	File     io.Reader
+	FileName string
+	MimeType string
+	Source   string
+	Summary  string
+	// SkipAccessCheck is for system callers that verified access another way,
+	// such as an editor callback signed with a shared secret.
+	SkipAccessCheck bool
+}
+
+// AddVersion stores a new revision and makes it current. Identical bytes do
+// not create a version. It needs the create_version capability.
+func (s *VersionService) AddVersion(ctx context.Context, userID, documentID string, in NewVersionInput) (*database.DocumentVersion, bool, error) {
+	var doc *database.Document
+	var err error
+	if in.SkipAccessCheck {
+		rid, parseErr := database.ParseRecordID(documentID)
+		if parseErr != nil {
+			return nil, false, ErrDocumentNotFound
+		}
+		doc, err = surrealdb.Select[database.Document](ctx, s.DB, rid)
+		if err == nil && (doc == nil || doc.ID == "") {
+			err = ErrDocumentNotFound
+		}
+	} else {
+		doc, err = s.docs.GetFor(ctx, userID, "create_version", documentID)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	temp, err := os.CreateTemp("", "edms-version-*")
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(temp.Name())
+	}()
+	hash := sha256.New()
+	size, err := io.Copy(io.MultiWriter(temp, hash), in.File)
+	if err != nil {
+		return nil, false, fmt.Errorf("read new version: %w", err)
+	}
+	checksum := hex.EncodeToString(hash.Sum(nil))
+	if checksum == doc.Checksum {
+		current, getErr := s.get(ctx, documentID, doc.CurrentVersionID)
+		return current, false, getErr
+	}
+	if _, err := temp.Seek(0, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+	name := doc.Name
+	if strings.TrimSpace(in.FileName) != "" {
+		name = filepath.Base(in.FileName)
+	}
+	mime := doc.MimeType
+	if strings.TrimSpace(in.MimeType) != "" {
+		mime = in.MimeType
+	}
+	source := in.Source
+	if source == "" {
+		source = database.VersionSourceUpload
+	}
+	summary := strings.TrimSpace(in.Summary)
+	if summary == "" {
+		summary = "Uploaded a new version"
+	}
+	next := doc.VersionCount + 1
+	if next < 2 {
+		next = 2
+	}
+	path := VersionStoragePath(documentID, next, name)
+	if doc.OrgID != "" {
+		_, key, _ := strings.Cut(doc.OrgID, ":")
+		path = filepath.ToSlash(filepath.Join("orgs", key, path))
+	}
+	if err := s.storage.Upload(ctx, path, temp); err != nil {
+		return nil, false, fmt.Errorf("store new version: %w", err)
+	}
+	version, err := surrealdb.Create[database.DocumentVersion](ctx, s.DB, "document_versions", &database.DocumentVersion{
+		DocumentID: documentID, ParentVersionID: doc.CurrentVersionID, Version: next, StorageProvider: s.storage.Name(),
+		StoragePath: path, FileName: name, MimeType: mime, Checksum: checksum, Size: size,
+		CreatedBy: userID, Source: source, ChangeSummary: summary,
+		ChangeManifest: map[string]any{"kind": source}, CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		_ = s.storage.Delete(ctx, path)
+		return nil, false, err
+	}
+	if err := s.addContributor(ctx, string(version.ID), userID, "author"); err != nil {
+		return nil, false, err
+	}
+	rid, _ := database.ParseRecordID(documentID)
+	if _, err := surrealdb.Merge[database.Document](ctx, s.DB, rid, map[string]any{
+		"current_version_id": string(version.ID), "version_count": next, "storage_path": path,
+		"mime_type": mime, "size": size, "checksum": checksum,
+		"status": database.DocumentStatusUploaded, "updated_at": time.Now().UTC(),
+	}); err != nil {
+		return nil, false, err
+	}
+	_ = writeAudit(ctx, s.DB, userID, "version.created", "document", documentID, map[string]any{
+		"document_version_id": string(version.ID), "version": next, "source": source, "summary": summary,
+	})
+	doc.CurrentVersionID, doc.StoragePath, doc.Checksum = string(version.ID), path, checksum
+	s.docs.stageOCR(ctx, doc, version)
+	return version, true, nil
 }
 
 func (s *VersionService) Restore(ctx context.Context, ownerID, documentID, versionID, summary string) (*database.DocumentVersion, error) {
