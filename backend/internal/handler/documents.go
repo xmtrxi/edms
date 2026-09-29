@@ -35,6 +35,7 @@ type DocumentsHandler struct {
 	db            *surrealdb.DB
 	signing       signing.Provider
 	signingSvc    *service.SigningService
+	previews      *service.PreviewService
 }
 
 func NewDocumentsHandler(deps Deps) *DocumentsHandler {
@@ -48,6 +49,7 @@ func NewDocumentsHandler(deps Deps) *DocumentsHandler {
 		access:        service.NewAccessService(deps.Client()),
 		db:            deps.Client(),
 	}
+	handler.previews = service.NewPreviewService(handler.docs, deps.Storage, deps.Office)
 	if deps.Cfg.Signing.Enabled && deps.Cfg.Signing.Provider == "documenso" {
 		handler.signing = signing.NewDocumensoClient(deps.Cfg.Signing.DocumensoBaseURL, deps.Cfg.Signing.DocumensoAPIKey, nil)
 		handler.signingSvc = service.NewSigningService(deps.Client(), deps.Storage, handler.signing)
@@ -66,6 +68,7 @@ func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
 	g.GET("/:id/processing-job", h.processingJob)
 	g.POST("/:id/redo-ocr", h.redoOCR)
 	g.GET("/:id/download", h.download)
+	g.GET("/:id/preview", h.preview)
 	g.PUT("/:id/category", h.setCategory)
 	g.DELETE("/:id", h.delete)
 	if h.cfg.Signing.Enabled {
@@ -497,6 +500,24 @@ func (h *DocumentsHandler) download(c *echo.Context) error {
 	c.Response().Header().Set(echo.HeaderContentType, doc.MimeType)
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=\""+strings.ReplaceAll(doc.Name, "\"", "")+"\"")
 	return c.Stream(http.StatusOK, doc.MimeType, reader)
+}
+
+// preview streams a rendition the browser can show inline. It needs view
+// access only, so people who may not download can still read the file.
+func (h *DocumentsHandler) preview(c *echo.Context) error {
+	preview, err := h.previews.Open(c.Request().Context(), actor(c), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, service.ErrNoPreview) {
+			return respondError(c, http.StatusUnsupportedMediaType, err.Error())
+		}
+		return h.handleError(c, err)
+	}
+	defer preview.Body.Close()
+	header := c.Response().Header()
+	header.Set("X-Preview-Kind", preview.Kind)
+	header.Set("Cache-Control", "private, no-store")
+	header.Set(echo.HeaderContentDisposition, "inline; filename=\""+strings.ReplaceAll(preview.Name, "\"", "")+"\"")
+	return c.Stream(http.StatusOK, preview.MimeType, preview.Body)
 }
 
 func (h *DocumentsHandler) delete(c *echo.Context) error {

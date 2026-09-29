@@ -708,3 +708,50 @@ export interface HealthResponse {
   created_at?: string;
   updated_at?: string;
 }
+
+// ── Viewer ─────────────────────────────────────────────────────────────────
+
+/** Size of one PDF page in points (1/72 inch), used to place overlays. */
+export interface PdfPageSize {
+  width: number;
+  height: number;
+}
+
+export type PreviewKind = "pdf" | "image" | "text" | "video" | "audio";
+
+// ── Drive ──────────────────────────────────────────────────────────────────
+
+export interface FileRequest {
+  id: string;
+  folder_id: string;
+  title: string;
+  instructions?: string;
+  max_files: number;
+  received_files: number;
+  expires_at: string;
+  closed: boolean;
+  created_at: string;
+  /** Only returned when the request is created. */
+  url?: string;
+}
+
+export interface PublicFileRequest {
+  title: string;
+  instructions?: string;
+  organization: string;
+  requested_by: string;
+  remaining: number;
+  expires_at: string;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  last_used_at?: string;
+  expires_at?: string;
+  created_at: string;
+  /** Only returned when the token is created. */
+  secret?: string;
+}

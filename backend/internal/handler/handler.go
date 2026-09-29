@@ -11,6 +11,7 @@ import (
 	"github.com/xmtrxi/edms/internal/cache"
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
+	"github.com/xmtrxi/edms/internal/gotenberg"
 	"github.com/xmtrxi/edms/internal/queue"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/storage"
@@ -24,6 +25,8 @@ type Deps struct {
 	Storage storage.Provider
 	Queue   *queue.Client
 	Search  *search.Client
+	// Office converts Office files to PDF for previews; nil when not configured.
+	Office *gotenberg.Client
 }
 
 func (d Deps) Client() *surrealdb.DB {

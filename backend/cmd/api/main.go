@@ -126,6 +126,7 @@ func main() {
 		Storage: provider,
 		Queue:   queueClient,
 		Search:  searchClient,
+		Office:  gotenbergClient,
 	})
 	if err := server.Start(ctx); err != nil {
 		logger.Error("api server stopped", "error", err)

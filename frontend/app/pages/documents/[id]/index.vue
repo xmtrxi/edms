@@ -25,6 +25,7 @@
   import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
+  import DocumentViewer from "@/components/viewer/DocumentViewer.vue";
   import type {
     CreateDocumentRoute,
     Document,
@@ -395,37 +396,14 @@
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <div class="min-w-0 space-y-6">
-        <div
-          class="border-border bg-card shadow-elegant relative overflow-hidden rounded-xl border"
-        >
-          <div
-            class="border-border bg-secondary/40 flex items-center justify-between border-b px-3 py-2"
-          >
-            <div class="flex min-w-0 items-center gap-2">
-              <FileTypeIcon :type="fileTypeFromMime(doc.mime_type)" size="sm" />
-              <span class="text-muted-foreground truncate text-[11px]">{{ doc.name }}</span>
-            </div>
-            <span class="text-muted-foreground shrink-0 text-[10px] uppercase">{{
-              fileTypeFromMime(doc.mime_type)
-            }}</span>
-          </div>
-          <div class="bg-card p-5 sm:p-8">
-            <div class="flex justify-center">
-              <FileTypeIcon :type="fileTypeFromMime(doc.mime_type)" size="lg" />
-            </div>
-            <h4 class="mt-4 text-center text-base font-semibold tracking-tight sm:text-lg">
-              {{ doc.name }}
-            </h4>
-            <p class="text-muted-foreground mt-1 text-center text-xs">
-              {{ doc.original_name }} · {{ formatBytes(doc.size) }}
-            </p>
-            <div class="mt-4 flex flex-wrap items-center justify-center gap-2">
-              <Button size="sm" variant="outline" class="gap-1.5" @click="handleDownload">
-                <CloudDownloadIcon class="h-3.5 w-3.5" /> Download
-              </Button>
-            </div>
-          </div>
-        </div>
+        <DocumentViewer
+          :document-id="doc.id"
+          :name="doc.name"
+          :mime-type="doc.mime_type"
+          :version-id="doc.current_version_id"
+          :can-download="can('download')"
+          @download="handleDownload"
+        />
 
         <DocumentOcrViewer
           :document="doc"

@@ -26,9 +26,10 @@ func New(cfg config.Config, deps handler.Deps) *Server {
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"},
-		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Visitor-Token", "X-Link-Password"},
+		AllowOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"},
+		AllowMethods:  []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions},
+		AllowHeaders:  []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Visitor-Token", "X-Link-Password"},
+		ExposeHeaders: []string{"X-Preview-Kind", echo.HeaderContentDisposition},
 	}))
 
 	s := &Server{
