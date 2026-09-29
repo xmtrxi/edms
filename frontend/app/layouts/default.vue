@@ -53,5 +53,6 @@
         </main>
       </div>
     </div>
+    <UploadTray />
   </SidebarProvider>
 </template>

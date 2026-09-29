@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,13 @@ type DeploymentConfig struct {
 	AdminEmail         string
 	PersonalWorkspaces bool
 	MultiOrg           bool
+}
+
+// UploadConfig controls resumable uploads. Chunks are staged in Dir, which
+// must be shared by all API instances behind a load balancer.
+type UploadConfig struct {
+	Dir      string
+	MaxBytes int64
 }
 
 type DatabaseConfig struct {
@@ -94,6 +102,7 @@ type AIConfig struct {
 type Config struct {
 	App             AppConfig
 	Deployment      DeploymentConfig
+	Uploads         UploadConfig
 	Database        DatabaseConfig
 	StorageProvider string
 	S3              S3Config
@@ -117,6 +126,10 @@ func Load(env string) Config {
 			Port: getEnvDefault("APP_PORT", "8080"),
 		},
 		Deployment: loadDeployment(),
+		Uploads: UploadConfig{
+			Dir:      getEnvDefault("UPLOAD_TMP_DIR", filepath.Join(os.TempDir(), "edms-uploads")),
+			MaxBytes: int64(getEnvInt("UPLOAD_MAX_MB", 10240)) * 1024 * 1024,
+		},
 		Database: DatabaseConfig{
 			URL:       getEnv("SURREALDB_URL"),
 			Namespace: getEnvDefault("SURREALDB_NAMESPACE", "edms"),

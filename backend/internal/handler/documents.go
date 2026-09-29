@@ -36,6 +36,7 @@ type DocumentsHandler struct {
 	signing       signing.Provider
 	signingSvc    *service.SigningService
 	previews      *service.PreviewService
+	uploads       *service.UploadService
 }
 
 func NewDocumentsHandler(deps Deps) *DocumentsHandler {
@@ -50,6 +51,7 @@ func NewDocumentsHandler(deps Deps) *DocumentsHandler {
 		db:            deps.Client(),
 	}
 	handler.previews = service.NewPreviewService(handler.docs, deps.Storage, deps.Office)
+	handler.uploads = service.NewUploadService(deps.Cfg.Uploads, deps.Client(), handler.docs)
 	if deps.Cfg.Signing.Enabled && deps.Cfg.Signing.Provider == "documenso" {
 		handler.signing = signing.NewDocumensoClient(deps.Cfg.Signing.DocumensoBaseURL, deps.Cfg.Signing.DocumensoAPIKey, nil)
 		handler.signingSvc = service.NewSigningService(deps.Client(), deps.Storage, handler.signing)
@@ -70,6 +72,13 @@ func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
 	g.GET("/:id/download", h.download)
 	g.GET("/:id/preview", h.preview)
 	g.PUT("/:id/category", h.setCategory)
+
+	u := api.Group("/uploads", middleware.RequireAuth(h.auth))
+	u.POST("", h.startUpload)
+	u.GET("/:id", h.uploadStatus)
+	u.PUT("/:id", h.uploadChunk)
+	u.POST("/:id/complete", h.completeUpload)
+	u.DELETE("/:id", h.cancelUpload)
 	g.DELETE("/:id", h.delete)
 	if h.cfg.Signing.Enabled {
 		g.POST("/:id/sign", h.sign)
@@ -339,26 +348,32 @@ func (h *DocumentsHandler) uploadAccess(c *echo.Context, folderID string) (servi
 	if err := json.Unmarshal([]byte(raw), &access); err != nil {
 		return access, http.StatusBadRequest, "access must be a JSON object"
 	}
+	status, message := h.validateUploadAccess(c, folderID, &access)
+	return access, status, message
+}
+
+// validateUploadAccess applies the upload sharing rules to access.
+func (h *DocumentsHandler) validateUploadAccess(c *echo.Context, folderID string, access *service.UploadAccess) (int, string) {
 	switch access.Mode {
 	case "", service.AccessModeInherit, service.AccessModePrivate:
 		access.Grants = nil
 	case service.AccessModeCustom:
 		actor, _ := service.ActorFrom(c.Request().Context())
 		if actor.IsGuest() && len(access.Grants) > 0 {
-			return access, http.StatusForbidden, "guests cannot share files"
+			return http.StatusForbidden, "guests cannot share files"
 		}
 		if folderID != "" && len(access.Grants) > 0 {
 			if err := h.access.RequireFolder(c.Request().Context(), actor.UserID, "share", folderID); err != nil {
-				return access, http.StatusForbidden, "you can upload here, but not share files from this folder with others"
+				return http.StatusForbidden, "you can upload here, but not share files from this folder with others"
 			}
 		}
 	default:
-		return access, http.StatusBadRequest, "access mode must be inherit, private or custom"
+		return http.StatusBadRequest, "access mode must be inherit, private or custom"
 	}
 	if access.Sensitivity != "" && !database.IsSensitivity(access.Sensitivity) {
-		return access, http.StatusBadRequest, "unknown sensitivity label"
+		return http.StatusBadRequest, "unknown sensitivity label"
 	}
-	return access, 0, ""
+	return 0, ""
 }
 
 func parseStringList(raw string) []string {
@@ -586,5 +601,104 @@ func (h *DocumentsHandler) handleError(c *echo.Context, err error) error {
 		return respondError(c, http.StatusForbidden, "forbidden")
 	default:
 		return respondError(c, http.StatusInternalServerError, "request failed")
+	}
+}
+
+// uploadProgress is what a resumable upload client needs to continue.
+type uploadProgress struct {
+	ID       string `json:"id"`
+	Received int64  `json:"received"`
+	Size     int64  `json:"size"`
+}
+
+func newUploadProgress(session *database.UploadSession) uploadProgress {
+	return uploadProgress{ID: string(session.ID), Received: session.Received, Size: session.Size}
+}
+
+func (h *DocumentsHandler) startUpload(c *echo.Context) error {
+	var r service.StartUploadInput
+	if err := bind(c, &r); err != nil {
+		return err
+	}
+	if r.Access != nil {
+		if status, message := h.validateUploadAccess(c, r.FolderID, r.Access); status != 0 {
+			return respondError(c, status, message)
+		}
+	}
+	if r.CategoryID != "" {
+		if _, err := h.categories.Get(c.Request().Context(), actor(c), r.CategoryID); err != nil {
+			return respondError(c, http.StatusBadRequest, "select a valid category")
+		}
+	}
+	session, err := h.uploads.Start(c.Request().Context(), actor(c), r)
+	if err != nil {
+		return uploadError(c, err)
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(newUploadProgress(session)))
+}
+
+func (h *DocumentsHandler) uploadStatus(c *echo.Context) error {
+	session, err := h.uploads.Status(c.Request().Context(), actor(c), c.Param("id"))
+	if err != nil {
+		return uploadError(c, err)
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(newUploadProgress(session)))
+}
+
+// uploadChunk appends the request body at ?offset=. On a mismatch it answers
+// 409 with the offset the client should resume from.
+func (h *DocumentsHandler) uploadChunk(c *echo.Context) error {
+	offset, err := strconv.ParseInt(c.QueryParam("offset"), 10, 64)
+	if err != nil || offset < 0 {
+		return respondError(c, http.StatusBadRequest, "offset is required")
+	}
+	session, err := h.uploads.Append(c.Request().Context(), actor(c), c.Param("id"), offset, c.Request().Body)
+	if errors.Is(err, service.ErrUploadOffset) && session != nil {
+		return c.JSON(http.StatusConflict, map[string]any{"error": err.Error(), "received": session.Received})
+	}
+	if err != nil {
+		return uploadError(c, err)
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(newUploadProgress(session)))
+}
+
+func (h *DocumentsHandler) completeUpload(c *echo.Context) error {
+	ctx := c.Request().Context()
+	doc, duplicate, session, err := h.uploads.Complete(ctx, actor(c), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidGrant) {
+			return respondError(c, http.StatusBadRequest, err.Error())
+		}
+		return uploadError(c, err)
+	}
+	if session.CategoryID != "" && !duplicate {
+		_ = h.categories.SetDocumentCategory(ctx, actor(c), string(doc.ID), session.CategoryID)
+	}
+	response := dto.NewDocumentResponse(doc).WithOwner(middleware.CurrentUser(c)).WithPermissions(h.permissions(c, doc))
+	if duplicate {
+		return respondJSON(c, http.StatusOK, dto.WithMessage(response, "duplicate file already exists; upload skipped"))
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(response))
+}
+
+func (h *DocumentsHandler) cancelUpload(c *echo.Context) error {
+	if err := h.uploads.Cancel(c.Request().Context(), actor(c), c.Param("id")); err != nil {
+		return uploadError(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func uploadError(c *echo.Context, err error) error {
+	switch {
+	case errors.Is(err, service.ErrUploadNotFound):
+		return respondError(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrForbidden):
+		return respondError(c, http.StatusForbidden, "you do not have upload access to this folder")
+	case errors.Is(err, service.ErrUploadTooLarge):
+		return respondError(c, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, service.ErrUploadPending):
+		return respondError(c, http.StatusConflict, err.Error())
+	default:
+		return respondError(c, http.StatusBadRequest, err.Error())
 	}
 }
