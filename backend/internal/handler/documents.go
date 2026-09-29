@@ -72,6 +72,7 @@ func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
 	g.GET("/:id/download", h.download)
 	g.GET("/:id/preview", h.preview)
 	g.PUT("/:id/category", h.setCategory)
+	g.PATCH("/:id", h.update)
 
 	u := api.Group("/uploads", middleware.RequireAuth(h.auth))
 	u.POST("", h.startUpload)
@@ -515,6 +516,21 @@ func (h *DocumentsHandler) download(c *echo.Context) error {
 	c.Response().Header().Set(echo.HeaderContentType, doc.MimeType)
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=\""+strings.ReplaceAll(doc.Name, "\"", "")+"\"")
 	return c.Stream(http.StatusOK, doc.MimeType, reader)
+}
+
+func (h *DocumentsHandler) update(c *echo.Context) error {
+	var r service.DocumentUpdate
+	if err := bind(c, &r); err != nil {
+		return err
+	}
+	doc, err := h.docs.Update(c.Request().Context(), actor(c), c.Param("id"), r)
+	if err != nil {
+		if errors.Is(err, service.ErrDocumentNotFound) || errors.Is(err, service.ErrForbidden) {
+			return h.handleError(c, err)
+		}
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(dto.NewDocumentResponse(doc).WithOwner(h.owner(c, doc)).WithPermissions(h.permissions(c, doc))))
 }
 
 // preview streams a rendition the browser can show inline. It needs view

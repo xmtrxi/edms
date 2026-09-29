@@ -487,6 +487,69 @@ func documentRecord(doc *database.Document) map[string]any {
 	return record
 }
 
+// DocumentUpdate renames a document or moves it. FolderID "root" moves it
+// out of every folder; nil fields are left unchanged.
+type DocumentUpdate struct {
+	Name     *string `json:"name"`
+	FolderID *string `json:"folder_id"`
+}
+
+// Update renames (needs edit) or moves (needs move on the document and
+// upload on the destination folder) a document.
+func (s *DocumentService) Update(ctx context.Context, userID, id string, in DocumentUpdate) (*database.Document, error) {
+	changes := map[string]any{}
+	toRoot := false
+	if in.Name != nil {
+		if _, err := s.GetFor(ctx, userID, "edit", id); err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(filepath.Base(*in.Name))
+		if name == "" || name == "." || strings.ContainsAny(name, "/\\") {
+			return nil, fmt.Errorf("a valid file name is required")
+		}
+		changes["name"] = name
+	}
+	if in.FolderID != nil {
+		doc, err := s.GetFor(ctx, userID, "move", id)
+		if err != nil {
+			return nil, err
+		}
+		target := strings.TrimSpace(*in.FolderID)
+		if target == RootFolderID || target == "" {
+			// Only the uploader keeps a file in their own space.
+			if doc.OwnerID != userID {
+				return nil, ErrForbidden
+			}
+			toRoot = true
+		} else {
+			if err := s.access.RequireFolder(ctx, userID, "upload", target); err != nil {
+				return nil, ErrForbidden
+			}
+			changes["folder_id"] = target
+		}
+	}
+	if len(changes) == 0 && !toRoot {
+		return s.Get(ctx, userID, id)
+	}
+	changes["updated_at"] = time.Now().UTC()
+	rid, err := database.ParseRecordID(id)
+	if err != nil {
+		return nil, ErrDocumentNotFound
+	}
+	if _, err := surrealdb.Merge[database.Document](ctx, s.DB, rid, changes); err != nil {
+		return nil, err
+	}
+	if toRoot {
+		// NONE, not NULL: the optional column rejects null values.
+		if _, err := surrealdb.Query[any](ctx, s.DB, "UPDATE $doc SET folder_id = NONE", map[string]any{"doc": rid}); err != nil {
+			return nil, err
+		}
+		changes["folder_id"] = RootFolderID
+	}
+	_ = writeAudit(ctx, s.DB, userID, "document.updated", "document", id, changes)
+	return s.Get(ctx, userID, id)
+}
+
 func (s *DocumentService) Delete(ctx context.Context, ownerID, id string) error {
 	_, err := s.GetFor(ctx, ownerID, "delete", id)
 	if err != nil {

@@ -3,6 +3,8 @@
   import { onMounted, reactive } from "vue";
   import { toast } from "vue-sonner";
 
+  import StorageSyncPanel from "@/components/settings/StorageSyncPanel.vue";
+
   definePageMeta({
     title: "Settings",
     description: "Personal office workflow preferences.",
@@ -10,6 +12,7 @@
   });
   useHead({ title: "Settings — Lumen DMS" });
   const workspace = workspaceService();
+  const auth = useAuthStore();
   const preferences = reactive({
     email_notifications: true,
     workflow_digest: true,
@@ -90,5 +93,6 @@
         }}</Button
       >
     </div>
+    <StorageSyncPanel v-if="auth.isOrgAdmin && auth.meta?.mode !== 'saas'" />
   </div>
 </template>

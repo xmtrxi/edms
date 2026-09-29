@@ -1,118 +1,46 @@
 <script setup lang="ts">
-  import { FolderPlusIcon, RefreshCwIcon, ScanSearchIcon, UploadCloudIcon } from "@lucide/vue";
-  import { toast } from "vue-sonner";
+  import { FolderPlusIcon, InboxIcon, UploadCloudIcon } from "@lucide/vue";
+  import { computed } from "vue";
 
-  import DocumentsBrowser from "@/components/documents/DocumentsBrowser.vue";
   import UploadDialog from "@/components/documents/UploadDialog.vue";
+  import DriveBrowser from "@/components/drive/DriveBrowser.vue";
   import { Button } from "@/components/ui/button";
 
-  const uploadOpen = shallowRef(false);
-  const selectedFolderPath = shallowRef("");
-  const syncing = shallowRef(false);
-  const dryRunning = shallowRef(false);
-  const browser = useTemplateRef<InstanceType<typeof DocumentsBrowser>>("browser");
-  const service = documentsService();
-
   definePageMeta({
-    title: "My Documents",
-    description: "All documents you own.",
-    breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "My Documents" }],
+    title: "Drive",
+    description: "Your files and the organization’s folders you can open.",
+    breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Drive" }],
   });
+  useHead({ title: "Drive — Lumen DMS" });
 
-  useHead({
-    title: "My Documents — Lumen DMS",
-    meta: [
-      {
-        name: "description",
-        content: "Browse, filter, and preview all of your documents.",
-      },
-      { property: "og:title", content: "My Documents — Lumen DMS" },
-    ],
-  });
+  const route = useRoute();
+  const router = useRouter();
+  const uploadOpen = shallowRef(false);
+  const browser = useTemplateRef<InstanceType<typeof DriveBrowser>>("browser");
 
-  const newFolder = () => {
-    uploadOpen.value = true;
-  };
-
-  const onUploaded = () => {
-    browser.value?.refresh();
-  };
-
-  const syncStorage = async (dryRun = false) => {
-    if (dryRun) dryRunning.value = true;
-    else syncing.value = true;
-
-    try {
-      const result = await service.syncStorage({ dryRun });
-      if (!result) {
-        toast.error(service.error.value || "Storage sync failed");
-        return;
-      }
-
-      if (dryRun) {
-        const summary = `${result.scanned} provider file(s) checked — ${result.would_import ?? 0} new, ${result.skipped} already known`;
-        if (result.failed) {
-          toast.warning(
-            `Dry run complete — ${summary}, ${result.failed} failed. Nothing was imported.`,
-          );
-        } else {
-          toast.success(`Dry run complete — ${summary}. Nothing was imported or sent to OCR.`);
-        }
-        return;
-      }
-
-      browser.value?.refresh();
-      if (result.failed) {
-        toast.warning(
-          `Sync imported ${result.imported} file(s), skipped ${result.skipped}, and failed ${result.failed}.`,
-        );
-      } else {
-        toast.success(
-          `Sync complete — ${result.imported} imported, ${result.skipped} already known.`,
-        );
-      }
-    } finally {
-      if (dryRun) dryRunning.value = false;
-      else syncing.value = false;
-    }
-  };
+  // The open folder lives in the URL so it survives reloads and can be linked.
+  const folderId = computed(() => String(route.query.folder ?? ""));
+  const navigate = (id: string) => router.push({ query: id ? { folder: id } : {} });
 </script>
 
 <template>
   <Teleport to="#page-actions-target">
     <Button
+      v-if="folderId"
       variant="outline"
       size="sm"
       class="gap-1.5"
-      :disabled="syncing || dryRunning"
-      title="Check provider files without importing or running OCR"
-      @click="syncStorage(true)"
+      @click="browser?.openFileRequest()"
     >
-      <ScanSearchIcon class="h-3.5 w-3.5" :class="dryRunning && 'animate-pulse'" />
-      {{ dryRunning ? "Checking…" : "Dry run" }}
+      <InboxIcon class="h-3.5 w-3.5" /> Request files
     </Button>
-    <Button
-      variant="outline"
-      size="sm"
-      class="gap-1.5"
-      :disabled="syncing || dryRunning"
-      @click="syncStorage(false)"
-    >
-      <RefreshCwIcon class="h-3.5 w-3.5" :class="syncing && 'animate-spin'" />
-      {{ syncing ? "Syncing…" : "Sync storage" }}
-    </Button>
-    <Button variant="outline" size="sm" class="gap-1.5" @click="newFolder">
+    <Button variant="outline" size="sm" class="gap-1.5" @click="browser?.openNewFolder()">
       <FolderPlusIcon class="h-3.5 w-3.5" /> New folder
     </Button>
     <Button size="sm" class="gap-1.5" @click="uploadOpen = true">
       <UploadCloudIcon class="h-4 w-4" /> Upload
     </Button>
   </Teleport>
-  <DocumentsBrowser ref="browser" @folder-change="selectedFolderPath = $event" />
-  <UploadDialog
-    :open="uploadOpen"
-    :initial-folder-path="selectedFolderPath"
-    @update:open="uploadOpen = $event"
-    @uploaded="onUploaded"
-  />
+  <DriveBrowser ref="browser" :folder-id="folderId" @navigate="navigate" />
+  <UploadDialog v-model:open="uploadOpen" :initial-folder-id="folderId" />
 </template>

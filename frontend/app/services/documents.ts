@@ -304,6 +304,25 @@ export const documentsService = () => {
   };
 
   // Passing an empty categoryId clears the document's category.
+  /** Renames or moves a document; folder_id "root" moves it to My files. */
+  const update = async (
+    id: string,
+    input: { name?: string; folder_id?: string },
+  ): Promise<Document | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<Document>>(`/documents/${id}`, {
+        method: "PATCH",
+        body: input,
+      });
+      error.value = "";
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
   const setCategory = async (id: string, categoryId: string): Promise<Document | null> => {
     const { $api } = useNuxtApp();
     try {
@@ -362,6 +381,7 @@ export const documentsService = () => {
     upload,
     syncStorage,
     setCategory,
+    update,
     requestSignature,
   };
 };

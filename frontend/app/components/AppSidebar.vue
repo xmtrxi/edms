@@ -61,7 +61,7 @@
 
   const main = ref<NavItem[]>([
     { title: "Dashboard", url: "/", icon: LayoutDashboardIcon },
-    { title: "My Documents", url: "/documents", icon: FileTextIcon },
+    { title: "Drive", url: "/documents", icon: FileTextIcon },
     { title: "Shared with me", url: "/shared", icon: Share2Icon },
     { title: "Favorites", url: "/favorites", icon: StarIcon },
     { title: "Recent", url: "/recent", icon: ClockIcon },

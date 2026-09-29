@@ -22,6 +22,9 @@ import (
 
 const maxSearchContentBytes = 150_000
 
+// RootFolderID filters listings to documents outside every folder.
+const RootFolderID = "root"
+
 type SearchService struct {
 	client  *surrealdb.DB
 	storage storage.Provider
@@ -403,7 +406,10 @@ func (s *SearchService) listDocuments(ctx context.Context, scope *VisibleScope, 
 		sql += " AND metadata.folder_path = $folder_path"
 		vars["folder_path"] = cleanFolderPath(folderPath)
 	}
-	if folderID != "" {
+	if folderID == RootFolderID {
+		// "My files": documents that are not in any folder.
+		sql += " AND (folder_id = NONE OR folder_id = '')"
+	} else if folderID != "" {
 		sql += " AND folder_id = $folder_id"
 		vars["folder_id"] = folderID
 	}
@@ -458,7 +464,10 @@ func (s *SearchService) countDocuments(ctx context.Context, scope *VisibleScope,
 		sql += " AND metadata.folder_path = $folder_path"
 		vars["folder_path"] = cleanFolderPath(folderPath)
 	}
-	if folderID != "" {
+	if folderID == RootFolderID {
+		// "My files": documents that are not in any folder.
+		sql += " AND (folder_id = NONE OR folder_id = '')"
+	} else if folderID != "" {
 		sql += " AND folder_id = $folder_id"
 		vars["folder_id"] = folderID
 	}
