@@ -61,6 +61,7 @@ type MemberView struct {
 	database.Membership
 	Email string `json:"email"`
 	Name  string `json:"name"`
+	Kind  string `json:"kind,omitempty"`
 }
 
 func (s *OrganizationService) Get(ctx context.Context, orgID string) (*database.Organization, error) {
@@ -350,7 +351,7 @@ func (s *OrganizationService) Members(ctx context.Context, orgID string) ([]Memb
 		view := MemberView{Membership: membership}
 		if rid, err := database.ParseRecordID(membership.UserID); err == nil {
 			if user, err := surrealdb.Select[database.User](ctx, s.db, rid); err == nil && user != nil {
-				view.Email, view.Name = user.Email, user.Name
+				view.Email, view.Name, view.Kind = user.Email, user.Name, user.Kind
 			}
 		}
 		result = append(result, view)
@@ -450,10 +451,52 @@ func (s *OrganizationService) RemoveMember(ctx context.Context, orgID string, ac
 			return err
 		}
 	}
+	// Agents exist only for this organization, so removing one also stops
+	// its tokens from working anywhere.
+	if user, err := s.userByID(ctx, target.UserID); err == nil && user != nil && user.Kind == database.UserKindAgent {
+		_, _ = surrealdb.Query[any](ctx, s.db, "UPDATE api_tokens SET revoked_at = time::now() WHERE user_id = $user AND revoked_at = NONE", map[string]any{"user": target.UserID})
+		rid, _ := database.ParseRecordID(target.UserID)
+		_, _ = surrealdb.Merge[database.User](ctx, s.db, rid, map[string]any{"status": database.UserStatusDisabled})
+	}
 	if s.authz != nil {
 		return s.authz.RevokeRoles(ctx, target.UserID, orgID)
 	}
 	return nil
+}
+
+// CreateAgent adds an AI agent to the organization as a member. Agents have
+// no password, so they can only act through the tokens issued for them, and
+// they see exactly what is shared with them, like any member.
+func (s *OrganizationService) CreateAgent(ctx context.Context, orgID, actorID, name string) (*database.User, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("give the agent a name")
+	}
+	org, err := s.Get(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	if org.Kind == database.OrganizationKindPersonal {
+		return nil, ErrPersonalWorkspaceTeam
+	}
+	suffix := make([]byte, 4)
+	if _, err := rand.Read(suffix); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	user, err := surrealdb.Create[database.User](ctx, s.db, "users", map[string]any{
+		"email": fmt.Sprintf("%s-%s@agents.%s.invalid", slugify(name), hex.EncodeToString(suffix), org.Slug),
+		"name":  name, "password_hash": "", "status": database.UserStatusActive, "kind": database.UserKindAgent,
+		"last_org_id": orgID, "created_at": now, "updated_at": now,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.addMember(ctx, orgID, string(user.ID), database.MembershipRoleMember, actorID); err != nil {
+		return nil, err
+	}
+	_ = writeAudit(ctx, s.db, actorID, "agent.created", "user", string(user.ID), map[string]any{"name": name})
+	return user, nil
 }
 
 type InviteInput struct {

@@ -43,7 +43,8 @@ func RequireAuth(auth *service.AuthService) echo.MiddlewareFunc {
 				if err != nil {
 					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
 				}
-				if !safeMethod(c.Request().Method) && !service.HasScope(token, service.ScopeWrite) {
+				// MCP sends every call as a POST and checks write scope per tool.
+				if !safeMethod(c.Request().Method) && !service.HasScope(token, service.ScopeWrite) && !strings.HasSuffix(c.Request().URL.Path, "/mcp") {
 					return echo.NewHTTPError(http.StatusForbidden, "this token is read-only")
 				}
 				claims, user = service.TokenClaims{UserID: string(tokenUser.ID), OrgID: token.OrgID}, tokenUser

@@ -94,6 +94,8 @@ export interface Member {
   status: MembershipStatus;
   joined_at: string;
   invited_by?: string;
+  /** "agent" for AI agent accounts that act through MCP. */
+  kind?: string;
 }
 
 export interface Invitation {

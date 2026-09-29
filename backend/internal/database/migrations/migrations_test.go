@@ -39,6 +39,7 @@ func TestMigrationsAreRegisteredInOrder(t *testing.T) {
 		"026_add_organizations",
 		"027_add_access_model",
 		"028_add_drive_features",
+		"029_add_agent_accounts",
 	}
 	if len(migrations) != len(expected) {
 		t.Fatalf("expected %d migrations, got %d", len(expected), len(migrations))

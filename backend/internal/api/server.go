@@ -28,7 +28,7 @@ func New(cfg config.Config, deps handler.Deps) *Server {
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins:  []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"},
 		AllowMethods:  []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch, http.MethodOptions},
-		AllowHeaders:  []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Visitor-Token", "X-Link-Password"},
+		AllowHeaders:  []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Visitor-Token", "X-Link-Password", "Mcp-Session-Id", "Mcp-Protocol-Version"},
 		ExposeHeaders: []string{"X-Preview-Kind", echo.HeaderContentDisposition},
 	}))
 
@@ -76,6 +76,7 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	handler.NewOrganizationsHandler(deps).RegisterRoutes(api)
 	handler.NewSharingHandler(deps).RegisterRoutes(api)
 	handler.NewFileRequestsHandler(deps).RegisterRoutes(api)
+	handler.NewMCPHandler(deps).RegisterRoutes(api)
 	handler.NewCategoriesHandler(deps).RegisterRoutes(api)
 	handler.NewDepartmentsHandler(deps).RegisterRoutes(api)
 	handler.NewAdministrationHandler(deps).RegisterRoutes(api)

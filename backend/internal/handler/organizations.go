@@ -36,6 +36,7 @@ func (h *OrganizationsHandler) RegisterRoutes(api *echo.Group) {
 	admin.GET("/invitations", h.invitations)
 	admin.POST("/invitations", h.invite)
 	admin.DELETE("/invitations/:id", h.revokeInvitation)
+	admin.POST("/agents", h.createAgent)
 }
 
 func (h *OrganizationsHandler) list(c *echo.Context) error {
@@ -106,7 +107,7 @@ func (h *OrganizationsHandler) members(c *echo.Context) error {
 	for _, member := range members {
 		items = append(items, dto.MemberResponse{
 			ID: string(member.ID), UserID: member.UserID, Email: member.Email, Name: member.Name,
-			Role: member.Role, Status: member.Status, JoinedAt: member.JoinedAt, InvitedBy: member.InvitedBy,
+			Role: member.Role, Status: member.Status, JoinedAt: member.JoinedAt, InvitedBy: member.InvitedBy, Kind: member.Kind,
 		})
 	}
 	return respondJSON(c, http.StatusOK, dto.List(items, int64(len(items)), 1, len(items)))
@@ -174,4 +175,33 @@ func (h *OrganizationsHandler) revokeInvitation(c *echo.Context) error {
 		return respondError(c, http.StatusNotFound, err.Error())
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+// createAgent adds an AI agent member and returns its first token. The token
+// carries the mcp scope, plus write when the agent may change files.
+func (h *OrganizationsHandler) createAgent(c *echo.Context) error {
+	var r struct {
+		Name  string `json:"name"`
+		Write bool   `json:"write"`
+	}
+	if err := bind(c, &r); err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	orgID := middleware.CurrentOrgID(c)
+	agent, err := h.orgs.CreateAgent(ctx, orgID, string(middleware.CurrentUser(c).ID), r.Name)
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	scopes := []string{service.ScopeMCP, service.ScopeRead}
+	if r.Write {
+		scopes = append(scopes, service.ScopeWrite)
+	}
+	token, secret, err := h.auth.Tokens.Create(ctx, string(agent.ID), orgID, service.TokenInput{Name: r.Name + " token", Scopes: scopes})
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "agent created, but its token could not be issued")
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(map[string]any{
+		"agent": dto.NewUserResponse(agent), "token": secret, "scopes": token.Scopes,
+	}))
 }

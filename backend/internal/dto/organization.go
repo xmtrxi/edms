@@ -44,6 +44,7 @@ type MemberResponse struct {
 	Status    string    `json:"status"`
 	JoinedAt  time.Time `json:"joined_at"`
 	InvitedBy string    `json:"invited_by,omitempty"`
+	Kind      string    `json:"kind,omitempty"`
 }
 
 type InvitationResponse struct {

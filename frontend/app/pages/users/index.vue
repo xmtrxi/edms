@@ -8,6 +8,7 @@
     UserIcon,
     UserPlusIcon,
     UsersIcon,
+    BotIcon,
   } from "@lucide/vue";
   import { computed, onMounted, shallowRef } from "vue";
   import { toast } from "vue-sonner";
@@ -123,6 +124,59 @@
     else toast.error(org.error.value);
   };
 
+  const config = useRuntimeConfig();
+  const mcpUrl = `${String(config.public.apiBase).replace(/\/$/, "")}/mcp`;
+  const agentOpen = shallowRef(false);
+  const agentName = shallowRef("");
+  const agentWrite = shallowRef(false);
+  const agentCreating = shallowRef(false);
+  const agentToken = shallowRef("");
+  const agentCopied = shallowRef<"" | "token" | "config">("");
+  const agentConfig = computed(() =>
+    JSON.stringify(
+      {
+        mcpServers: {
+          edms: {
+            type: "http",
+            url: mcpUrl,
+            headers: { Authorization: `Bearer ${agentToken.value}` },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+  );
+
+  const openAgent = () => {
+    agentName.value = "";
+    agentWrite.value = false;
+    agentToken.value = "";
+    agentCopied.value = "";
+    agentOpen.value = true;
+  };
+
+  const createAgent = async () => {
+    agentCreating.value = true;
+    const result = await org.createAgent({ name: agentName.value.trim(), write: agentWrite.value });
+    agentCreating.value = false;
+    if (!result) {
+      toast.error(org.error.value || "Could not add the agent");
+      return;
+    }
+    agentToken.value = result.token;
+    toast.success(`${agentName.value.trim()} added`);
+  };
+
+  const copyAgent = async (what: "token" | "config") => {
+    try {
+      await navigator.clipboard.writeText(what === "token" ? agentToken.value : agentConfig.value);
+      agentCopied.value = what;
+    } catch {
+      toast.error("Copy failed. Select the text and copy it manually.");
+    }
+  };
+
   onMounted(() => {
     if (!auth.isPersonalWorkspace) void org.load(auth.isOrgAdmin);
   });
@@ -130,6 +184,9 @@
 
 <template>
   <Teleport v-if="auth.isOrgAdmin && !auth.isPersonalWorkspace" to="#page-actions-target">
+    <Button size="sm" variant="outline" class="gap-2" @click="openAgent">
+      <BotIcon class="size-4" />Add AI agent
+    </Button>
     <Button size="sm" class="gap-2" @click="openInvite">
       <UserPlusIcon class="size-4" />Invite people
     </Button>
@@ -207,6 +264,9 @@
             <span class="truncate">{{ member.name || member.email }}</span>
             <Badge v-if="member.user_id === auth.user?.id" variant="outline" class="h-5 px-1.5">
               You
+            </Badge>
+            <Badge v-if="member.kind === 'agent'" variant="secondary" class="h-5 gap-1 px-1.5">
+              <BotIcon class="size-3" />AI agent
             </Badge>
             <Badge v-if="member.status === 'suspended'" variant="destructive" class="h-5 px-1.5">
               Suspended
@@ -356,6 +416,89 @@
           <Button variant="outline" @click="inviteOpen = false">Cancel</Button>
           <Button :disabled="!inviteEmail.includes('@') || inviting" @click="sendInvite">
             {{ inviting ? "Sending…" : "Send invitation" }}
+          </Button>
+        </template>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog v-model:open="agentOpen">
+    <DialogContent class="sm:max-w-lg">
+      <DialogHeader>
+        <DialogTitle>{{ agentToken ? "Connect your agent" : "Add an AI agent" }}</DialogTitle>
+        <DialogDescription>
+          Agents are members that work through MCP. They see only what you share with them, like
+          anyone else, and every action shows up in the audit log.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div v-if="agentToken" class="space-y-4">
+        <div class="space-y-1.5">
+          <Label for="agent-token">Token</Label>
+          <div class="flex gap-2">
+            <Input
+              id="agent-token"
+              :model-value="agentToken"
+              readonly
+              class="font-mono text-xs"
+              @focus="($event.target as HTMLInputElement).select()"
+            />
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Copy token"
+              @click="copyAgent('token')"
+            >
+              <CheckIcon v-if="agentCopied === 'token'" class="size-4" />
+              <CopyIcon v-else class="size-4" />
+            </Button>
+          </div>
+          <p class="text-muted-foreground text-xs">
+            This is the only time the token is shown. Removing the agent revokes it.
+          </p>
+        </div>
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <Label>MCP client settings</Label>
+            <Button variant="ghost" size="sm" class="h-7 gap-1.5" @click="copyAgent('config')">
+              <CheckIcon v-if="agentCopied === 'config'" class="size-3.5" />
+              <CopyIcon v-else class="size-3.5" />Copy
+            </Button>
+          </div>
+          <pre class="bg-muted max-h-48 overflow-auto rounded-lg p-3 font-mono text-xs">{{
+            agentConfig
+          }}</pre>
+        </div>
+      </div>
+
+      <form v-else class="space-y-4" @submit.prevent="createAgent">
+        <div class="space-y-1.5">
+          <Label for="agent-name">Name</Label>
+          <Input
+            id="agent-name"
+            v-model="agentName"
+            placeholder="Contracts assistant"
+            autocomplete="off"
+          />
+        </div>
+        <label class="flex items-start gap-3 rounded-lg border p-3">
+          <Switch v-model="agentWrite" class="mt-0.5" />
+          <span class="space-y-0.5">
+            <span class="block text-sm font-medium">Allow changes</span>
+            <span class="text-muted-foreground block text-xs">
+              Lets the agent create documents and move files. Without it, the agent can only search
+              and read.
+            </span>
+          </span>
+        </label>
+      </form>
+
+      <DialogFooter>
+        <Button v-if="agentToken" @click="agentOpen = false">Done</Button>
+        <template v-else>
+          <Button variant="outline" @click="agentOpen = false">Cancel</Button>
+          <Button :disabled="!agentName.trim() || agentCreating" @click="createAgent">
+            {{ agentCreating ? "Adding…" : "Add agent" }}
           </Button>
         </template>
       </DialogFooter>

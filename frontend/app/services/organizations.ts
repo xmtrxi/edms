@@ -112,8 +112,28 @@ export const organizationsService = () => {
     }
   };
 
+  /** Adds an AI agent member and returns its token, shown only once. */
+  const createAgent = async (input: {
+    name: string;
+    write: boolean;
+  }): Promise<{ token: string; scopes: string[] } | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<ApiResponse<{ token: string; scopes: string[] }>>("/org/agents", {
+        method: "POST",
+        body: input,
+      });
+      await loadMembers();
+      return res.data;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
   return {
     members,
+    createAgent,
     invitations,
     loading,
     error,
