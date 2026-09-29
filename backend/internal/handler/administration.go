@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v5"
-	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/dto"
 	"github.com/xmtrxi/edms/internal/middleware"
 	"github.com/xmtrxi/edms/internal/service"
@@ -14,7 +13,6 @@ type AdministrationHandler struct {
 	auth    *service.AuthService
 	authz   *service.AuthorizationService
 	service *service.AdministrationService
-	cfg     config.Config
 }
 
 func NewAdministrationHandler(deps Deps) *AdministrationHandler {
@@ -22,7 +20,8 @@ func NewAdministrationHandler(deps Deps) *AdministrationHandler {
 	if err != nil {
 		panic(err)
 	}
-	return &AdministrationHandler{auth: service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger), authz: authz, service: service.NewAdministrationService(deps.Client(), authz), cfg: deps.Cfg}
+	auth := service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger)
+	return &AdministrationHandler{auth: auth, authz: authz, service: service.NewAdministrationService(deps.Client(), authz, auth.Orgs)}
 }
 func (h *AdministrationHandler) RegisterRoutes(api *echo.Group) {
 	g := api.Group("/admin", middleware.RequireAuth(h.auth))
@@ -36,24 +35,25 @@ func (h *AdministrationHandler) RegisterRoutes(api *echo.Group) {
 	r.POST("", h.createRole)
 	r.PUT("/:key/permissions", h.setPermissions)
 	r.PUT("/:key/users/:userID", h.assignRole)
+	// Kept for older clients; new clients use POST /api/org/invitations.
 	g.POST("/invitations", h.invite, middleware.RequirePermission(h.authz, "users", "manage"))
 }
 func (h *AdministrationHandler) invite(c *echo.Context) error {
-	var r struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
-	}
+	var r service.InviteInput
 	if e := bind(c, &r); e != nil {
 		return e
 	}
-	link, e := h.service.Invite(c.Request().Context(), h.cfg.SMTP, string(middleware.CurrentUser(c).ID), r.Name, r.Email)
+	if membership := middleware.CurrentMembership(c); r.Role == "owner" && (membership == nil || membership.Role != "owner") {
+		return respondError(c, http.StatusForbidden, "only owners can invite owners")
+	}
+	link, e := h.auth.Orgs.Invite(c.Request().Context(), middleware.CurrentOrgID(c), string(middleware.CurrentUser(c).ID), r)
 	if e != nil {
 		return respondError(c, 400, e.Error())
 	}
 	return respondJSON(c, http.StatusCreated, dto.Created(map[string]string{"setup_link": link}))
 }
 func (h *AdministrationHandler) listDepartments(c *echo.Context) error {
-	items, e := h.service.Departments(c.Request().Context())
+	items, e := h.service.Departments(c.Request().Context(), middleware.CurrentOrgID(c))
 	if e != nil {
 		return respondError(c, 500, "failed to list departments")
 	}
@@ -64,34 +64,35 @@ func (h *AdministrationHandler) createDepartment(c *echo.Context) error {
 	if e := bind(c, &r); e != nil {
 		return e
 	}
-	item, e := h.service.CreateDepartment(c.Request().Context(), string(middleware.CurrentUser(c).ID), r)
+	item, e := h.service.CreateDepartment(c.Request().Context(), middleware.CurrentOrgID(c), string(middleware.CurrentUser(c).ID), r)
 	if e != nil {
 		return respondError(c, 400, e.Error())
 	}
 	return respondJSON(c, http.StatusCreated, dto.Created(item))
 }
 func (h *AdministrationHandler) members(c *echo.Context) error {
-	items, e := h.service.Members(c.Request().Context(), c.Param("id"))
+	items, e := h.service.Members(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"))
 	if e != nil {
-		return respondError(c, 500, "failed to list department members")
+		return respondError(c, 404, e.Error())
 	}
 	return respondJSON(c, 200, dto.OK(items))
 }
 func (h *AdministrationHandler) addMember(c *echo.Context) error {
 	var r struct {
 		UserID string `json:"user_id"`
+		Role   string `json:"role"`
 	}
 	if e := bind(c, &r); e != nil {
 		return e
 	}
-	item, e := h.service.AddMember(c.Request().Context(), c.Param("id"), r.UserID)
+	item, e := h.service.AddMember(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"), r.UserID, r.Role)
 	if e != nil {
 		return respondError(c, 400, e.Error())
 	}
 	return respondJSON(c, http.StatusCreated, dto.Created(item))
 }
 func (h *AdministrationHandler) listRoles(c *echo.Context) error {
-	items, e := h.service.Roles(c.Request().Context())
+	items, e := h.service.Roles(c.Request().Context(), middleware.CurrentOrgID(c))
 	if e != nil {
 		return respondError(c, 500, "failed to list roles")
 	}
@@ -107,7 +108,7 @@ func (h *AdministrationHandler) createRole(c *echo.Context) error {
 	if e := bind(c, &r); e != nil {
 		return e
 	}
-	item, e := h.authz.CreateRole(c.Request().Context(), r.Key, r.Name, r.Description, r.Permissions)
+	item, e := h.authz.CreateRole(c.Request().Context(), middleware.CurrentOrgID(c), r.Key, r.Name, r.Description, r.Permissions)
 	if e != nil {
 		return respondError(c, 400, e.Error())
 	}
@@ -120,14 +121,31 @@ func (h *AdministrationHandler) setPermissions(c *echo.Context) error {
 	if e := bind(c, &r); e != nil {
 		return e
 	}
-	if e := h.authz.ReplaceRolePermissions(c.Request().Context(), c.Param("key"), r.Permissions); e != nil {
+	orgID := middleware.CurrentOrgID(c)
+	if !h.roleInOrg(c, orgID, c.Param("key")) {
+		return respondError(c, 404, "role not found")
+	}
+	if e := h.authz.ReplaceRolePermissions(c.Request().Context(), orgID, c.Param("key"), r.Permissions); e != nil {
 		return respondError(c, 400, e.Error())
 	}
 	return c.NoContent(http.StatusNoContent)
 }
 func (h *AdministrationHandler) assignRole(c *echo.Context) error {
-	if e := h.service.AssignRole(c.Request().Context(), c.Param("userID"), c.Param("key")); e != nil {
+	if e := h.service.AssignRole(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("userID"), c.Param("key")); e != nil {
 		return respondError(c, 400, e.Error())
 	}
 	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *AdministrationHandler) roleInOrg(c *echo.Context, orgID, key string) bool {
+	roles, err := h.service.Roles(c.Request().Context(), orgID)
+	if err != nil {
+		return false
+	}
+	for _, role := range roles {
+		if role.Key == key && role.OrgID == orgID {
+			return true
+		}
+	}
+	return false
 }

@@ -2,14 +2,13 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	surrealgoorm "github.com/kemboi22/surreal-go-orm"
 	"github.com/surrealdb/surrealdb.go"
 	"golang.org/x/crypto/bcrypt"
 
@@ -24,13 +23,20 @@ var (
 )
 
 type AuthService struct {
-	cfg config.Config
-	DB  *surrealdb.DB
-	log *slog.Logger
+	cfg  config.Config
+	DB   *surrealdb.DB
+	log  *slog.Logger
+	Orgs *OrganizationService
 }
 
 func NewAuthService(cfg config.Config, db *surrealdb.DB, logger *slog.Logger) *AuthService {
-	return &AuthService{cfg: cfg, DB: db, log: logger}
+	return &AuthService{cfg: cfg, DB: db, log: logger, Orgs: NewOrganizationService(cfg, db, logger)}
+}
+
+// TokenClaims identifies the user and the organization the session acts in.
+type TokenClaims struct {
+	UserID string
+	OrgID  string
 }
 
 func (s *AuthService) jwtSecret() []byte {
@@ -40,9 +46,10 @@ func (s *AuthService) jwtSecret() []byte {
 	return []byte(s.cfg.JWT.Secret)
 }
 
-func (s *AuthService) SignToken(user *database.User) (string, error) {
+func (s *AuthService) SignToken(user *database.User, orgID string) (string, error) {
 	claims := jwt.MapClaims{
 		"sub":   user.ID,
+		"org":   orgID,
 		"email": user.Email,
 		"iat":   time.Now().Unix(),
 		"exp":   time.Now().Add(72 * time.Hour).Unix(),
@@ -50,7 +57,7 @@ func (s *AuthService) SignToken(user *database.User) (string, error) {
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret())
 }
 
-func (s *AuthService) ParseToken(tokenString string) (string, error) {
+func (s *AuthService) ParseToken(tokenString string) (TokenClaims, error) {
 	claims := jwt.MapClaims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (any, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -59,10 +66,31 @@ func (s *AuthService) ParseToken(tokenString string) (string, error) {
 		return s.jwtSecret(), nil
 	})
 	if err != nil || !token.Valid {
-		return "", err
+		if err == nil {
+			err = jwt.ErrTokenInvalidClaims
+		}
+		return TokenClaims{}, err
 	}
 	sub, _ := claims["sub"].(string)
-	return sub, nil
+	org, _ := claims["org"].(string)
+	return TokenClaims{UserID: sub, OrgID: org}, nil
+}
+
+// SwitchOrganization issues a token scoped to another organization the user
+// belongs to and remembers it as their default.
+func (s *AuthService) SwitchOrganization(ctx context.Context, user *database.User, orgID string) (string, *database.Organization, error) {
+	if _, err := s.Orgs.Membership(ctx, orgID, string(user.ID)); err != nil {
+		return "", nil, err
+	}
+	org, err := s.Orgs.Get(ctx, orgID)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := s.Orgs.SetLastOrganization(ctx, string(user.ID), orgID); err != nil {
+		return "", nil, err
+	}
+	token, err := s.SignToken(user, orgID)
+	return token, org, err
 }
 
 func (s *AuthService) UserByID(ctx context.Context, id string) (*database.User, error) {
@@ -73,26 +101,25 @@ func (s *AuthService) UserByID(ctx context.Context, id string) (*database.User, 
 	return surrealdb.Select[database.User](ctx, s.DB, rid)
 }
 
-func (s *AuthService) ListUsers(ctx context.Context) ([]database.User, error) {
-	result, err := surrealdb.Query[[]database.User](ctx, s.DB, "SELECT * FROM users WHERE status = $status ORDER BY name", map[string]any{"status": database.UserStatusActive})
-	if err != nil || result == nil || len(*result) == 0 {
-		return nil, err
-	}
-	return (*result)[0].Result, nil
+// ListUsers returns the active members of one organization.
+func (s *AuthService) ListUsers(ctx context.Context, orgID string) ([]database.User, error) {
+	return s.Orgs.MemberUsers(ctx, orgID)
 }
 
 type RegisterInput struct {
-	Email    string
-	Name     string
-	Password string
+	Email            string
+	Name             string
+	Password         string
+	OrganizationName string
 }
 
 func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*database.User, error) {
-	if in.Email == "" || in.Password == "" {
-		return nil, ErrInvalidCredentials
+	in.Email = strings.ToLower(strings.TrimSpace(in.Email))
+	if in.Email == "" || len(in.Password) < 8 {
+		return nil, fmt.Errorf("email and a password of at least 8 characters are required")
 	}
 
-	existing, err := surrealgoorm.Query[database.User](s.DB, "users").WhereEq("email", in.Email).First(ctx)
+	existing, err := s.Orgs.userByEmail(ctx, in.Email)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +131,11 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*database
 		return nil, err
 	}
 	firstUser := registered == nil || len(*registered) == 0 || len((*registered)[0].Result) == 0
-	if !firstUser {
+	caps := s.Orgs.Capabilities()
+	if !firstUser && !caps.OpenSignup() {
+		return nil, ErrRegistrationClosed
+	}
+	if firstUser && !caps.IsSaaS() && caps.AdminEmail() != "" && !strings.EqualFold(caps.AdminEmail(), in.Email) {
 		return nil, ErrRegistrationClosed
 	}
 
@@ -127,41 +158,52 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*database
 	if err != nil {
 		return nil, err
 	}
-	authz, err := NewAuthorizationService(s.DB)
+	var org *database.Organization
+	if firstUser {
+		org, err = s.Orgs.FirstRegistration(ctx, created, in.OrganizationName)
+	} else {
+		org, err = s.Orgs.AfterSignup(ctx, created, in.OrganizationName)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := authz.BootstrapAdmin(ctx, string(created.ID)); err != nil {
-		return nil, err
-	}
-	return created, nil
+	created.LastOrgID = string(org.ID)
+	return created, s.Orgs.SetLastOrganization(ctx, string(created.ID), string(org.ID))
 }
 
-func (s *AuthService) AcceptInvitation(ctx context.Context, token, password string) (*database.User, error) {
-	if token == "" || len(password) < 8 {
-		return nil, ErrInvalidCredentials
+// AcceptInvitation creates the account for someone invited by email and adds
+// them to the organization. People who already have an account sign in and
+// accept through OrganizationService.AcceptInvitation instead.
+func (s *AuthService) AcceptInvitation(ctx context.Context, token, name, password string) (*database.User, string, error) {
+	if len(password) < 8 {
+		return nil, "", fmt.Errorf("password must be at least 8 characters")
 	}
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
-	r, err := surrealdb.Query[[]database.Invitation](ctx, s.DB, "SELECT * FROM invitations WHERE token_hash = $hash AND status = 'pending' LIMIT 1", map[string]any{"hash": hash})
-	if err != nil || r == nil || len(*r) == 0 || len((*r)[0].Result) == 0 {
-		return nil, fmt.Errorf("invitation is invalid or expired")
+	invite, err := s.Orgs.pendingInvitation(ctx, token)
+	if err != nil {
+		return nil, "", err
 	}
-	invite := (*r)[0].Result[0]
-	if time.Now().UTC().After(invite.ExpiresAt) {
-		return nil, fmt.Errorf("invitation is expired")
+	if existing, err := s.Orgs.userByEmail(ctx, invite.Email); err != nil {
+		return nil, "", err
+	} else if existing != nil {
+		return nil, "", fmt.Errorf("an account already exists for %s; sign in to accept", invite.Email)
 	}
 	pass, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	if strings.TrimSpace(name) == "" {
+		name = invite.Name
 	}
 	now := time.Now().UTC()
-	user, err := surrealdb.Create[database.User](ctx, s.DB, "users", &database.User{Email: invite.Email, Name: invite.Name, PasswordHash: string(pass), Status: database.UserStatusActive, CreatedAt: now, UpdatedAt: now})
+	user, err := surrealdb.Create[database.User](ctx, s.DB, "users", &database.User{Email: invite.Email, Name: strings.TrimSpace(name), PasswordHash: string(pass), Status: database.UserStatusActive, LastOrgID: invite.OrgID, CreatedAt: now, UpdatedAt: now})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	rid, _ := database.ParseRecordID(string(invite.ID))
-	_, err = surrealdb.Merge[database.Invitation](ctx, s.DB, rid, map[string]any{"status": "accepted", "accepted_at": now})
-	return user, err
+	if _, err := s.Orgs.acceptFor(ctx, invite, user); err != nil {
+		return nil, "", err
+	}
+	tokenString, err := s.SignToken(user, invite.OrgID)
+	return user, tokenString, err
 }
 
 type LoginInput struct {
@@ -170,18 +212,22 @@ type LoginInput struct {
 }
 
 func (s *AuthService) Login(ctx context.Context, in LoginInput) (*database.User, string, error) {
-	user, err := surrealgoorm.Query[database.User](s.DB, "users").WhereEq("email", in.Email).First(ctx)
+	user, err := s.Orgs.userByEmail(ctx, in.Email)
 	if err != nil {
 		return nil, "", err
 	}
-	if user == nil {
+	if user == nil || user.Status != database.UserStatusActive {
 		return nil, "", ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(in.Password)); err != nil {
 		return nil, "", ErrInvalidCredentials
 	}
+	org, _, err := s.Orgs.Resolve(ctx, user, "")
+	if err != nil {
+		return nil, "", err
+	}
 
-	token, err := s.SignToken(user)
+	token, err := s.SignToken(user, string(org.ID))
 	if err != nil {
 		return nil, "", err
 	}

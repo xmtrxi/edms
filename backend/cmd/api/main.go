@@ -49,6 +49,11 @@ func main() {
 		}
 	}
 
+	if err := service.NewOrganizationService(cfg, db.Client(), logger).Bootstrap(ctx); err != nil {
+		logger.Error("bootstrap organization", "error", err)
+		os.Exit(1)
+	}
+
 	provider, err := storage.NewProvider(ctx, cfg)
 	if err != nil {
 		logger.Error("create storage provider", "error", err)

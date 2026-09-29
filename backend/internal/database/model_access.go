@@ -7,6 +7,7 @@ import "time"
 // truth for authorization decisions.
 type Role struct {
 	ID          RecordID  `json:"id,omitempty"`
+	OrgID       string    `json:"org_id,omitempty"`
 	Key         string    `json:"key"`
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
@@ -29,6 +30,8 @@ type CasbinRule struct {
 
 type Invitation struct {
 	ID         RecordID  `json:"id,omitempty"`
+	OrgID      string    `json:"org_id"`
+	Role       string    `json:"role"`
 	Email      string    `json:"email"`
 	Name       string    `json:"name"`
 	TokenHash  string    `json:"-"`

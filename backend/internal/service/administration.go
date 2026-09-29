@@ -2,83 +2,109 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
-	"net/smtp"
 	"strings"
 	"time"
 
 	"github.com/surrealdb/surrealdb.go"
-	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
 )
 
 type DepartmentInput struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	ParentID    string `json:"parent_id"`
 }
 type AdministrationService struct {
 	db    *surrealdb.DB
 	authz *AuthorizationService
+	orgs  *OrganizationService
 }
 
-func NewAdministrationService(db *surrealdb.DB, authz *AuthorizationService) *AdministrationService {
-	return &AdministrationService{db: db, authz: authz}
+func NewAdministrationService(db *surrealdb.DB, authz *AuthorizationService, orgs *OrganizationService) *AdministrationService {
+	return &AdministrationService{db: db, authz: authz, orgs: orgs}
 }
-func (s *AdministrationService) Departments(ctx context.Context) ([]database.Department, error) {
-	r, e := surrealdb.Query[[]database.Department](ctx, s.db, "SELECT * FROM departments ORDER BY name", nil)
-	if e != nil || r == nil || len(*r) == 0 {
-		return nil, e
-	}
-	return (*r)[0].Result, nil
+func (s *AdministrationService) Departments(ctx context.Context, orgID string) ([]database.Department, error) {
+	return queryRows[database.Department](ctx, s.db, "SELECT * FROM departments WHERE org_id = $org ORDER BY name", map[string]any{"org": orgID})
 }
-func (s *AdministrationService) CreateDepartment(ctx context.Context, actor string, in DepartmentInput) (*database.Department, error) {
+
+func (s *AdministrationService) CreateDepartment(ctx context.Context, orgID, actor string, in DepartmentInput) (*database.Department, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, fmt.Errorf("department name is required")
 	}
+	if in.ParentID != "" {
+		if _, err := s.department(ctx, orgID, in.ParentID); err != nil {
+			return nil, err
+		}
+	}
 	now := time.Now().UTC()
-	return surrealdb.Create[database.Department](ctx, s.db, "departments", &database.Department{Name: strings.TrimSpace(in.Name), Description: strings.TrimSpace(in.Description), CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
+	return surrealdb.Create[database.Department](ctx, s.db, "departments", &database.Department{OrgID: orgID, ParentID: in.ParentID, Name: strings.TrimSpace(in.Name), Description: strings.TrimSpace(in.Description), CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
 }
-func (s *AdministrationService) Members(ctx context.Context, id string) ([]database.DepartmentMember, error) {
-	r, e := surrealdb.Query[[]database.DepartmentMember](ctx, s.db, "SELECT * FROM department_members WHERE department_id = $department", map[string]any{"department": id})
-	if e != nil || r == nil || len(*r) == 0 {
-		return nil, e
+
+func (s *AdministrationService) Members(ctx context.Context, orgID, departmentID string) ([]database.DepartmentMember, error) {
+	if _, err := s.department(ctx, orgID, departmentID); err != nil {
+		return nil, err
 	}
-	return (*r)[0].Result, nil
+	return queryRows[database.DepartmentMember](ctx, s.db, "SELECT * FROM department_members WHERE org_id = $org AND department_id = $department", map[string]any{"org": orgID, "department": departmentID})
 }
-func (s *AdministrationService) AddMember(ctx context.Context, did, uid string) (*database.DepartmentMember, error) {
-	return surrealdb.Create[database.DepartmentMember](ctx, s.db, "department_members", &database.DepartmentMember{DepartmentID: did, UserID: uid, Role: "member", CreatedAt: time.Now().UTC()})
+
+// AddMember puts an organization member into a department. People outside the
+// organization cannot be added.
+func (s *AdministrationService) AddMember(ctx context.Context, orgID, departmentID, userID, role string) (*database.DepartmentMember, error) {
+	if _, err := s.department(ctx, orgID, departmentID); err != nil {
+		return nil, err
+	}
+	if s.orgs != nil {
+		if _, err := s.orgs.Membership(ctx, orgID, userID); err != nil {
+			return nil, err
+		}
+	}
+	if role != "head" {
+		role = "member"
+	}
+	existing, err := queryRows[database.DepartmentMember](ctx, s.db, "SELECT * FROM department_members WHERE department_id = $department AND user_id = $user LIMIT 1", map[string]any{"department": departmentID, "user": userID})
+	if err != nil {
+		return nil, err
+	}
+	if len(existing) > 0 {
+		rid, _ := database.ParseRecordID(string(existing[0].ID))
+		return surrealdb.Merge[database.DepartmentMember](ctx, s.db, rid, map[string]any{"role": role})
+	}
+	return surrealdb.Create[database.DepartmentMember](ctx, s.db, "department_members", &database.DepartmentMember{OrgID: orgID, DepartmentID: departmentID, UserID: userID, Role: role, CreatedAt: time.Now().UTC()})
 }
-func (s *AdministrationService) Roles(ctx context.Context) ([]database.Role, error) {
-	r, e := surrealdb.Query[[]database.Role](ctx, s.db, "SELECT * FROM roles ORDER BY name", nil)
-	if e != nil || r == nil || len(*r) == 0 {
-		return nil, e
+
+func (s *AdministrationService) department(ctx context.Context, orgID, id string) (*database.Department, error) {
+	rid, err := database.ParseRecordID(id)
+	if err != nil {
+		return nil, fmt.Errorf("department not found")
 	}
-	return (*r)[0].Result, nil
+	department, err := surrealdb.Select[database.Department](ctx, s.db, rid)
+	if err != nil || department == nil || department.OrgID != orgID {
+		return nil, fmt.Errorf("department not found")
+	}
+	return department, nil
 }
-func (s *AdministrationService) AssignRole(ctx context.Context, uid, role string) error {
-	return s.authz.AssignRole(ctx, uid, role, OrganizationDomain)
+
+// Roles lists the system roles plus the organization's custom roles.
+func (s *AdministrationService) Roles(ctx context.Context, orgID string) ([]database.Role, error) {
+	return queryRows[database.Role](ctx, s.db, "SELECT * FROM roles WHERE org_id = $org OR protected = true ORDER BY name", map[string]any{"org": orgID})
 }
-func (s *AdministrationService) Invite(ctx context.Context, cfg config.SMTPConfig, actor, name, email string) (string, error) {
-	if strings.TrimSpace(email) == "" {
-		return "", fmt.Errorf("email is required")
+
+// AssignRole gives an organization member a role in that organization.
+func (s *AdministrationService) AssignRole(ctx context.Context, orgID, userID, role string) error {
+	if s.orgs != nil {
+		if _, err := s.orgs.Membership(ctx, orgID, userID); err != nil {
+			return err
+		}
 	}
-	b := make([]byte, 32)
-	if _, e := rand.Read(b); e != nil {
-		return "", e
+	roles, err := s.Roles(ctx, orgID)
+	if err != nil {
+		return err
 	}
-	token := base64.RawURLEncoding.EncodeToString(b)
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
-	now := time.Now().UTC()
-	if _, e := surrealdb.Create[database.Invitation](ctx, s.db, "invitations", &database.Invitation{Email: email, Name: name, TokenHash: hash, Status: "pending", ExpiresAt: now.Add(72 * time.Hour), CreatedBy: actor, CreatedAt: now}); e != nil {
-		return "", e
+	for _, candidate := range roles {
+		if candidate.Key == role {
+			return s.authz.AssignRole(ctx, userID, role, orgID)
+		}
 	}
-	link := strings.TrimRight(cfg.AppURL, "/") + "/auth/setup?token=" + token
-	if cfg.Host != "" && cfg.From != "" {
-		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-		_ = smtp.SendMail(cfg.Host+":"+cfg.Port, auth, cfg.From, []string{email}, []byte("To: "+email+"\r\nSubject: Your EDMS invitation\r\n\r\nSet your password: "+link+"\r\n"))
-	}
-	return link, nil
+	return fmt.Errorf("role %q not found", role)
 }

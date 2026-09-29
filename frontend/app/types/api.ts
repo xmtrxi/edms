@@ -28,6 +28,7 @@ export interface RegisterRequest {
   name: string;
   email: string;
   password: string;
+  organization_name?: string;
 }
 
 export type UserStatus = "active" | "disabled";
@@ -44,6 +45,73 @@ export interface User {
 export interface AuthResponse {
   token: string;
   user: User;
+  organization: Organization;
+}
+
+// ── Organizations ──────────────────────────────────────────────────────────
+
+export type DeploymentMode = "saas" | "selfhosted";
+
+/** Public description of the installation, from GET /meta. */
+export interface DeploymentMeta {
+  mode: DeploymentMode;
+  open_signup: boolean;
+  personal_workspaces: boolean;
+  multi_org: boolean;
+  organization_name?: string;
+}
+
+export type OrganizationKind = "personal" | "organization";
+export type MembershipRole = "owner" | "admin" | "member" | "guest";
+export type MembershipStatus = "active" | "suspended";
+
+export interface Organization {
+  id: string;
+  slug: string;
+  name: string;
+  kind: OrganizationKind;
+  role?: MembershipRole;
+  created_at: string;
+}
+
+export interface SessionResponse {
+  user: User;
+  organization: Organization;
+  organizations: Organization[];
+}
+
+export interface SwitchOrganizationResponse {
+  token: string;
+  organization: Organization;
+}
+
+export interface Member {
+  id: string;
+  user_id: string;
+  email: string;
+  name: string;
+  role: MembershipRole;
+  status: MembershipStatus;
+  joined_at: string;
+  invited_by?: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  name: string;
+  role: MembershipRole;
+  status: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface InvitationPreview {
+  email: string;
+  name: string;
+  role: MembershipRole;
+  organization_name: string;
+  account_exists: boolean;
 }
 
 // ── Administration & forms ─────────────────────────────────────────────────

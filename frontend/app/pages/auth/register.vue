@@ -1,6 +1,14 @@
 <script setup lang="ts">
-  import { EyeIcon, EyeOffIcon, FileTextIcon, LockIcon, MailIcon, UserIcon } from "@lucide/vue";
-  import { ref } from "vue";
+  import {
+    Building2Icon,
+    EyeIcon,
+    EyeOffIcon,
+    FileTextIcon,
+    LockIcon,
+    MailIcon,
+    UserIcon,
+  } from "@lucide/vue";
+  import { computed, onMounted, ref } from "vue";
   import { toast } from "vue-sonner";
 
   import { Button } from "@/components/ui/button";
@@ -16,12 +24,19 @@
   });
 
   const auth = useAuthStore();
-  const form = ref({ name: "", email: "", password: "", confirm: "" });
+  const form = ref({ name: "", email: "", password: "", confirm: "", organization: "" });
   const showPw = ref(false);
+  const isSaaS = computed(() => auth.meta?.mode === "saas");
+
+  onMounted(() => void auth.fetchMeta());
 
   const handleRegister = async () => {
     if (!form.value.name.trim() || !form.value.email.trim() || !form.value.password.trim()) {
       toast.error("Please fill in all fields");
+      return;
+    }
+    if (form.value.password.length < 8) {
+      toast.error("Use at least 8 characters for your password");
       return;
     }
     if (form.value.password !== form.value.confirm) {
@@ -30,17 +45,12 @@
     }
     const registered = await auth.register({
       name: form.value.name.trim(),
-      email: form.value.email,
+      email: form.value.email.trim(),
       password: form.value.password,
+      organization_name: form.value.organization.trim() || undefined,
     });
     if (!registered) {
       toast.error(auth.error || "Could not create account");
-      return;
-    }
-    const loggedIn = await auth.login({ email: form.value.email, password: form.value.password });
-    if (!loggedIn) {
-      toast.success("Account created — please sign in");
-      navigateTo("/auth/login");
       return;
     }
     toast.success(`Welcome, ${auth.user?.name ?? ""}`);
@@ -76,8 +86,22 @@
             <FileTextIcon class="text-primary h-5 w-5" /> Lumen
           </div>
           <h1 class="text-2xl font-bold tracking-tight">Create account</h1>
-          <p class="text-muted-foreground mt-1 text-sm">Start your document workspace.</p>
+          <p class="text-muted-foreground mt-1 text-sm">
+            {{
+              isSaaS
+                ? "Start with a personal workspace, and add your team whenever you're ready."
+                : "Set up the first administrator account for this installation."
+            }}
+          </p>
         </div>
+
+        <p
+          v-if="auth.meta && !auth.meta.open_signup"
+          class="bg-muted text-muted-foreground mb-4 rounded-lg p-3 text-xs leading-relaxed"
+        >
+          Accounts on this installation are created by invitation. If you were invited, open the
+          link in your email.
+        </p>
 
         <form @submit.prevent="handleRegister" class="space-y-4">
           <div class="space-y-1.5">
@@ -109,6 +133,24 @@
                 placeholder="you@company.com"
                 class="pl-9"
                 autocomplete="email"
+              />
+            </div>
+          </div>
+          <div v-if="isSaaS" class="space-y-1.5">
+            <Label for="organization"
+              >Organization <span class="text-muted-foreground font-normal">(optional)</span></Label
+            >
+            <div class="relative">
+              <Building2Icon
+                class="text-muted-foreground absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+              />
+              <Input
+                id="organization"
+                v-model="form.organization"
+                type="text"
+                placeholder="Acme Ltd"
+                class="pl-9"
+                autocomplete="organization"
               />
             </div>
           </div>

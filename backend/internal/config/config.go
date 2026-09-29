@@ -13,6 +13,17 @@ type AppConfig struct {
 	Port string
 }
 
+// DeploymentConfig decides how organizations are provisioned. A self-hosted
+// install runs exactly one organization; SaaS lets anyone sign up.
+type DeploymentConfig struct {
+	Mode               string
+	Signup             string
+	OrgName            string
+	AdminEmail         string
+	PersonalWorkspaces bool
+	MultiOrg           bool
+}
+
 type DatabaseConfig struct {
 	URL       string
 	Namespace string
@@ -82,6 +93,7 @@ type AIConfig struct {
 }
 type Config struct {
 	App             AppConfig
+	Deployment      DeploymentConfig
 	Database        DatabaseConfig
 	StorageProvider string
 	S3              S3Config
@@ -104,6 +116,7 @@ func Load(env string) Config {
 			Env:  getEnvDefault("APP_ENV", "development"),
 			Port: getEnvDefault("APP_PORT", "8080"),
 		},
+		Deployment: loadDeployment(),
 		Database: DatabaseConfig{
 			URL:       getEnv("SURREALDB_URL"),
 			Namespace: getEnvDefault("SURREALDB_NAMESPACE", "edms"),
@@ -170,6 +183,37 @@ func Load(env string) Config {
 			ChatModel:      getEnv("AI_CHAT_MODEL"),
 			EmbeddingModel: getEnv("AI_EMBEDDING_MODEL"),
 		},
+	}
+}
+
+const (
+	ModeSaaS       = "saas"
+	ModeSelfHosted = "selfhosted"
+
+	SignupOpen   = "open"
+	SignupInvite = "invite"
+)
+
+func loadDeployment() DeploymentConfig {
+	mode := strings.ToLower(getEnvDefault("EDMS_MODE", ModeSelfHosted))
+	if mode != ModeSaaS {
+		mode = ModeSelfHosted
+	}
+	signupDefault, personalDefault := SignupInvite, false
+	if mode == ModeSaaS {
+		signupDefault, personalDefault = SignupOpen, true
+	}
+	signup := strings.ToLower(getEnvDefault("EDMS_SIGNUP", signupDefault))
+	if signup != SignupOpen {
+		signup = SignupInvite
+	}
+	return DeploymentConfig{
+		Mode:               mode,
+		Signup:             signup,
+		OrgName:            getEnv("EDMS_ORG_NAME"),
+		AdminEmail:         getEnv("EDMS_ADMIN_EMAIL"),
+		PersonalWorkspaces: getEnvBool("EDMS_PERSONAL_WORKSPACES", personalDefault),
+		MultiOrg:           getEnvBool("EDMS_MULTI_ORG", mode == ModeSaaS),
 	}
 }
 

@@ -70,6 +70,7 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	api := s.echo.Group("/api")
 	handler.NewHealthHandler(deps).RegisterRoutes(s.echo, api)
 	handler.NewAuthHandler(deps).RegisterRoutes(api)
+	handler.NewOrganizationsHandler(deps).RegisterRoutes(api)
 	handler.NewCategoriesHandler(deps).RegisterRoutes(api)
 	handler.NewDepartmentsHandler(deps).RegisterRoutes(api)
 	handler.NewAdministrationHandler(deps).RegisterRoutes(api)

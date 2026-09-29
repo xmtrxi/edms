@@ -30,7 +30,8 @@ e = some(where (p.eft == allow)) && !some(where (p.eft == deny))
 [matchers]
 m = g(r.sub, p.sub, r.dom) && (p.dom == "*" || r.dom == p.dom) && (p.obj == "*" || r.obj == p.obj) && (p.act == "*" || r.act == p.act)`
 
-const OrganizationDomain = "org"
+// OrganizationAdminRole is the protected system role. Its policy applies in
+// every domain; assignments are made per organization (the Casbin domain).
 const OrganizationAdminRole = "organization_admin"
 
 // AuthorizationService is the sole policy decision point. Resource services
@@ -41,7 +42,29 @@ type AuthorizationService struct {
 	mu       sync.RWMutex
 }
 
+var (
+	sharedAuthzMu sync.Mutex
+	sharedAuthz   = map[*surrealdb.DB]*AuthorizationService{}
+)
+
+// NewAuthorizationService returns the process-wide policy decision point for
+// db. Sharing one enforcer means a role change made through any handler is
+// seen by every other handler immediately.
 func NewAuthorizationService(db *surrealdb.DB) (*AuthorizationService, error) {
+	sharedAuthzMu.Lock()
+	defer sharedAuthzMu.Unlock()
+	if existing, ok := sharedAuthz[db]; ok {
+		return existing, nil
+	}
+	s, err := newAuthorizationService(db)
+	if err != nil {
+		return nil, err
+	}
+	sharedAuthz[db] = s
+	return s, nil
+}
+
+func newAuthorizationService(db *surrealdb.DB) (*AuthorizationService, error) {
 	m, err := model.NewModelFromString(casbinModel)
 	if err != nil {
 		return nil, err
@@ -75,41 +98,67 @@ func (s *AuthorizationService) Reload() error {
 	return s.enforcer.LoadPolicy()
 }
 
-func (s *AuthorizationService) CreateRole(ctx context.Context, key, name, description string, permissions []string) (*database.Role, error) {
+// CreateRole defines a custom role owned by one organization.
+func (s *AuthorizationService) CreateRole(ctx context.Context, orgID, key, name, description string, permissions []string) (*database.Role, error) {
 	key = normalizeRoleKey(key)
-	if key == "" || strings.TrimSpace(name) == "" {
+	if orgID == "" || key == "" || strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("role key and name are required")
 	}
+	if key == OrganizationAdminRole {
+		return nil, fmt.Errorf("role key %q is reserved", key)
+	}
 	now := time.Now().UTC()
-	role, err := surrealdb.Create[database.Role](ctx, s.db, "roles", &database.Role{Key: key, Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), CreatedAt: now, UpdatedAt: now})
+	role, err := surrealdb.Create[database.Role](ctx, s.db, "roles", &database.Role{OrgID: orgID, Key: key, Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), CreatedAt: now, UpdatedAt: now})
 	if err != nil {
 		return nil, err
 	}
-	if err = s.ReplaceRolePermissions(ctx, key, permissions); err != nil {
+	if err = s.ReplaceRolePermissions(ctx, orgID, key, permissions); err != nil {
 		return nil, err
 	}
 	return role, nil
 }
 
-func (s *AuthorizationService) ReplaceRolePermissions(ctx context.Context, role string, permissions []string) error {
+// ReplaceRolePermissions rewrites a custom role's policy inside one
+// organization. The protected admin role cannot be edited.
+func (s *AuthorizationService) ReplaceRolePermissions(ctx context.Context, orgID, role string, permissions []string) error {
+	if orgID == "" {
+		return fmt.Errorf("organization is required")
+	}
+	if role == OrganizationAdminRole {
+		return fmt.Errorf("the organization admin role cannot be edited")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, _ = surrealdb.Query[any](ctx, s.db, "DELETE casbin_rules WHERE ptype = 'p' AND v0 = $role", map[string]any{"role": role})
+	_, _ = surrealdb.Query[any](ctx, s.db, "DELETE casbin_rules WHERE ptype = 'p' AND v0 = $role AND v1 = $domain", map[string]any{"role": role, "domain": orgID})
 	for _, permission := range permissions {
 		object, action, ok := strings.Cut(strings.TrimSpace(permission), ".")
 		if !ok || object == "" || action == "" {
 			return fmt.Errorf("invalid permission %q", permission)
 		}
-		if _, err := surrealdb.Create[database.CasbinRule](ctx, s.db, "casbin_rules", &database.CasbinRule{PType: "p", V0: role, V1: "*", V2: object, V3: action, V4: "allow", CreatedAt: time.Now().UTC()}); err != nil {
+		if _, err := surrealdb.Create[database.CasbinRule](ctx, s.db, "casbin_rules", &database.CasbinRule{PType: "p", V0: role, V1: orgID, V2: object, V3: action, V4: "allow", CreatedAt: time.Now().UTC()}); err != nil {
 			return err
 		}
 	}
 	return s.enforcer.LoadPolicy()
 }
 
+// RevokeRoles removes every role the user holds in one organization.
+func (s *AuthorizationService) RevokeRoles(ctx context.Context, userID, domain string) error {
+	if domain == "" {
+		return fmt.Errorf("organization is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := surrealdb.Query[any](ctx, s.db, "DELETE casbin_rules WHERE ptype = 'g' AND v0 = $user AND v2 = $domain", map[string]any{"user": userID, "domain": domain}); err != nil {
+		return err
+	}
+	return s.enforcer.LoadPolicy()
+}
+
+// AssignRole gives the user exactly one role inside the organization domain.
 func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, domain string) error {
 	if domain == "" {
-		domain = OrganizationDomain
+		return fmt.Errorf("organization is required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -120,7 +169,9 @@ func (s *AuthorizationService) AssignRole(ctx context.Context, userID, role, dom
 	return s.enforcer.LoadPolicy()
 }
 
-func (s *AuthorizationService) BootstrapAdmin(ctx context.Context, userID string) error {
+// BootstrapAdmin makes sure the protected admin role exists and grants it to
+// userID inside the organization.
+func (s *AuthorizationService) BootstrapAdmin(ctx context.Context, userID, orgID string) error {
 	roles, err := surrealdb.Query[[]database.Role](ctx, s.db, "SELECT * FROM roles WHERE key = $key LIMIT 1", map[string]any{"key": OrganizationAdminRole})
 	if err != nil {
 		return err
@@ -130,11 +181,21 @@ func (s *AuthorizationService) BootstrapAdmin(ctx context.Context, userID string
 		if _, err := surrealdb.Create[database.Role](ctx, s.db, "roles", &database.Role{Key: OrganizationAdminRole, Name: "Organization Admin", Description: "Full system access", Protected: true, CreatedAt: now, UpdatedAt: now}); err != nil {
 			return err
 		}
-		if err := s.ReplaceRolePermissions(ctx, OrganizationAdminRole, []string{"*.*"}); err != nil {
+		if err := s.ensureAdminPolicy(ctx); err != nil {
 			return err
 		}
 	}
-	return s.AssignRole(ctx, userID, OrganizationAdminRole, OrganizationDomain)
+	return s.AssignRole(ctx, userID, OrganizationAdminRole, orgID)
+}
+
+func (s *AuthorizationService) ensureAdminPolicy(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = surrealdb.Query[any](ctx, s.db, "DELETE casbin_rules WHERE ptype = 'p' AND v0 = $role", map[string]any{"role": OrganizationAdminRole})
+	if _, err := surrealdb.Create[database.CasbinRule](ctx, s.db, "casbin_rules", &database.CasbinRule{PType: "p", V0: OrganizationAdminRole, V1: "*", V2: "*", V3: "*", V4: "allow", CreatedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
+	return s.enforcer.LoadPolicy()
 }
 
 func normalizeRoleKey(value string) string {

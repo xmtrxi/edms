@@ -29,5 +29,6 @@ func Migrations() []surrealgoorm.Migration {
 		addWorkspaceOperations{},
 		addAIJobs{},
 		addEmailDelivery{},
+		addOrganizations{},
 	}
 }

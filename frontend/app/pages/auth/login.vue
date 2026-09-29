@@ -39,7 +39,9 @@
       return;
     }
     toast.success(`Welcome back, ${auth.user?.name ?? ""}`);
-    navigateTo("/");
+    const redirect = String(useRoute().query.redirect ?? "");
+    // Only follow same-app paths, never an absolute URL from the query string.
+    navigateTo(redirect.startsWith("/") && !redirect.startsWith("//") ? redirect : "/");
   };
 </script>
 

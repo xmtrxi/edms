@@ -1,23 +1,24 @@
 import { getToken } from "@/utils/token";
 
-export default defineNuxtRouteMiddleware((to) => {
+const guestOnlyPages = new Set(["/auth/login", "/auth/register"]);
+
+export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server) return;
 
   const auth = useAuthStore();
-  const isAuthPage = to.path === "/auth/login" || to.path === "/auth/register";
 
   if (to.path.startsWith("/visit")) return;
+  // Invitation links work whether or not the person is signed in.
+  if (to.path === "/auth/invite") return;
 
-  if (isAuthPage) {
+  if (guestOnlyPages.has(to.path)) {
     if (getToken()) return navigateTo("/");
     return;
   }
 
-  if (!getToken()) return navigateTo("/auth/login");
+  if (!getToken()) return navigateTo({ path: "/auth/login", query: { redirect: to.fullPath } });
 
   if (!auth.user) {
-    return auth.fetchMe().then((ok) => {
-      if (!ok) return navigateTo("/auth/login");
-    });
+    if (!(await auth.fetchSession())) return navigateTo("/auth/login");
   }
 });

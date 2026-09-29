@@ -70,7 +70,7 @@
   const admin = ref<NavItem[]>([
     { title: "Folders", url: "/admin/folders", icon: FolderOpenIcon },
     { title: "Access control", url: "/admin/access", icon: ShieldCheckIcon },
-    { title: "Users & Permissions", url: "/users", icon: ShieldCheckIcon },
+    { title: "Members", url: "/users", icon: UsersIcon },
     { title: "Audit Log", url: "/audit", icon: HistoryIcon },
   ]);
 
@@ -94,17 +94,7 @@
 <template>
   <Sidebar collapsible="icon" class="border-sidebar-border border-r">
     <SidebarHeader class="border-sidebar-border/60 border-b">
-      <div class="flex items-center gap-2.5 px-1.5 py-1">
-        <div
-          class="from-primary to-primary/60 text-primary-foreground shadow-glow grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br"
-        >
-          <FolderOpenIcon class="h-4 w-4" />
-        </div>
-        <div v-if="!collapsed" class="flex flex-col leading-tight">
-          <span class="text-sm font-semibold tracking-tight">Lumen DMS</span>
-          <span class="text-muted-foreground text-[11px]">Office records</span>
-        </div>
-      </div>
+      <WorkspaceSwitcher />
     </SidebarHeader>
 
     <SidebarContent class="gap-0">
