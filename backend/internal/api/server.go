@@ -73,6 +73,7 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	handler.NewAuthHandler(deps).RegisterRoutes(api)
 	handler.NewOrganizationsHandler(deps).RegisterRoutes(api)
 	handler.NewSharingHandler(deps).RegisterRoutes(api)
+	handler.NewFileRequestsHandler(deps).RegisterRoutes(api)
 	handler.NewCategoriesHandler(deps).RegisterRoutes(api)
 	handler.NewDepartmentsHandler(deps).RegisterRoutes(api)
 	handler.NewAdministrationHandler(deps).RegisterRoutes(api)
