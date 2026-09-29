@@ -1,4 +1,4 @@
-import type { ApiResponse, Department, Role, User } from "@/types/api";
+import type { ApiResponse, Department, Group, GroupMember, Role, User } from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
 
 export const administrationService = () => {
@@ -26,7 +26,80 @@ export const administrationService = () => {
       loading.value = false;
     }
   };
-  const createDepartment = async (input: Pick<Department, "name" | "description">) => {
+  /** Runs a request and records its error; returns null on failure. */
+  const call = async <T>(
+    path: string,
+    options: Record<string, unknown> = {},
+  ): Promise<T | null> => {
+    const { $api } = useNuxtApp();
+    try {
+      const response = await $api<ApiResponse<T> | undefined>(path, options);
+      error.value = "";
+      return (response?.data ?? true) as T;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+  const groups = shallowRef<Group[]>([]);
+  const loadGroups = async () => {
+    groups.value = (await call<Group[]>("/admin/groups")) ?? [];
+  };
+  const updateDepartment = async (
+    id: string,
+    input: { name: string; description?: string; parent_id?: string },
+  ) => {
+    const updated = await call<Department>(`/admin/departments/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: input,
+    });
+    if (updated)
+      departments.value = departments.value.map((item) => (item.id === id ? updated : item));
+    return updated;
+  };
+  const deleteDepartment = async (id: string) => {
+    const ok = await call(`/admin/departments/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (ok) departments.value = departments.value.filter((item) => item.id !== id);
+    return Boolean(ok);
+  };
+  const removeMember = async (departmentId: string, userId: string) =>
+    Boolean(
+      await call(
+        `/admin/departments/${encodeURIComponent(departmentId)}/members/${encodeURIComponent(userId)}`,
+        { method: "DELETE" },
+      ),
+    );
+  const createGroup = async (input: { name: string; description?: string }) => {
+    const created = await call<Group>("/admin/groups", { method: "POST", body: input });
+    if (created) await loadGroups();
+    return created;
+  };
+  const deleteGroup = async (id: string) => {
+    const ok = await call(`/admin/groups/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (ok) groups.value = groups.value.filter((item) => item.id !== id);
+    return Boolean(ok);
+  };
+  const groupMembers = async (id: string) =>
+    (await call<GroupMember[]>(`/admin/groups/${encodeURIComponent(id)}/members`)) ?? [];
+  const addGroupMember = async (id: string, userId: string) => {
+    const ok = await call(`/admin/groups/${encodeURIComponent(id)}/members`, {
+      method: "POST",
+      body: { user_id: userId },
+    });
+    if (ok) await loadGroups();
+    return Boolean(ok);
+  };
+  const removeGroupMember = async (id: string, userId: string) => {
+    const ok = await call(
+      `/admin/groups/${encodeURIComponent(id)}/members/${encodeURIComponent(userId)}`,
+      { method: "DELETE" },
+    );
+    if (ok) await loadGroups();
+    return Boolean(ok);
+  };
+  const createDepartment = async (
+    input: Pick<Department, "name" | "description"> & { parent_id?: string },
+  ) => {
     const { $api } = useNuxtApp();
     try {
       const response = await $api<ApiResponse<Department>>("/admin/departments", {
@@ -101,12 +174,16 @@ export const administrationService = () => {
       return [];
     }
   };
-  const addMember = async (departmentId: string, userId: string) => {
+  const addMember = async (
+    departmentId: string,
+    userId: string,
+    role: "member" | "head" = "member",
+  ) => {
     const { $api } = useNuxtApp();
     try {
       await $api(`/admin/departments/${departmentId}/members`, {
         method: "POST",
-        body: { user_id: userId },
+        body: { user_id: userId, role },
       });
       return true;
     } catch (err) {
@@ -128,5 +205,15 @@ export const administrationService = () => {
     invite,
     members,
     addMember,
+    removeMember,
+    updateDepartment,
+    deleteDepartment,
+    groups,
+    loadGroups,
+    createGroup,
+    deleteGroup,
+    groupMembers,
+    addGroupMember,
+    removeGroupMember,
   };
 };

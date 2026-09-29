@@ -69,7 +69,7 @@
 
   const admin = ref<NavItem[]>([
     { title: "Folders", url: "/admin/folders", icon: FolderOpenIcon },
-    { title: "Access control", url: "/admin/access", icon: ShieldCheckIcon },
+    { title: "Teams & access", url: "/admin/access", icon: ShieldCheckIcon },
     { title: "Members", url: "/users", icon: UsersIcon },
     { title: "Audit Log", url: "/audit", icon: HistoryIcon },
   ]);

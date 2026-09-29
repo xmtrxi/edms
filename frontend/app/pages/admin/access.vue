@@ -1,65 +1,48 @@
 <script setup lang="ts">
-  import { Building2Icon, ShieldCheckIcon, UsersIcon } from "@lucide/vue";
-  import { computed, onMounted, reactive, shallowRef } from "vue";
+  import { ShieldCheckIcon } from "@lucide/vue";
+  import { onMounted, reactive, shallowRef } from "vue";
   import { toast } from "vue-sonner";
 
+  import DepartmentsPanel from "@/components/admin/DepartmentsPanel.vue";
+  import GroupsPanel from "@/components/admin/GroupsPanel.vue";
+  import SharingPolicyPanel from "@/components/admin/SharingPolicyPanel.vue";
   import { Badge } from "@/components/ui/badge";
   import { Button } from "@/components/ui/button";
-  import { Card, CardContent } from "@/components/ui/card";
   import {
     Dialog,
     DialogContent,
+    DialogDescription,
     DialogFooter,
     DialogHeader,
     DialogTitle,
   } from "@/components/ui/dialog";
   import { Input } from "@/components/ui/input";
   import { Label } from "@/components/ui/label";
+  import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+  } from "@/components/ui/select";
+  import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
   import { Textarea } from "@/components/ui/textarea";
   import { administrationService } from "@/services/administration";
+  import type { Role } from "@/types/api";
 
   definePageMeta({
-    title: "Access control",
-    description: "Departments, users, and Casbin roles.",
-    breadcrumbs: [{ label: "Administration", to: "/" }, { label: "Access control" }],
+    title: "Teams & access",
+    description: "Departments, groups, roles and the rules for sharing files.",
+    breadcrumbs: [{ label: "Administration", to: "/" }, { label: "Teams & access" }],
   });
-  const {
-    departments,
-    roles,
-    users,
-    loading,
-    error,
-    load,
-    createDepartment,
-    createRole,
-    setPermissions,
-    assignRole,
-    invite,
-  } = administrationService();
-  const open = shallowRef(false);
+
+  const admin = administrationService();
+  const { roles, users, error, load, createRole, setPermissions, assignRole } = admin;
+  const tab = shallowRef("departments");
+  onMounted(() => void load());
+
   const roleOpen = shallowRef(false);
-  const inviteOpen = shallowRef(false);
-  const form = reactive({ name: "", description: "" });
-  const roleForm = reactive({
-    key: "",
-    name: "",
-    description: "",
-    permissions: "forms.create, forms.submit",
-  });
-  const inviteForm = reactive({ name: "", email: "" });
-  const activeUsers = computed(() => users.value.filter((user) => user.status === "active"));
-  onMounted(() => {
-    void load();
-  });
-  const save = async () => {
-    const created = await createDepartment(form);
-    if (created) {
-      toast.success("Department created");
-      open.value = false;
-      form.name = "";
-      form.description = "";
-    } else toast.error(error.value || "Could not create department");
-  };
+  const roleForm = reactive({ key: "", name: "", description: "", permissions: "forms.create" });
   const saveRole = async () => {
     const role = await createRole({
       ...roleForm,
@@ -70,150 +53,154 @@
       roleOpen.value = false;
     } else toast.error(error.value || "Could not create role");
   };
-  const sendInvite = async () => {
-    const link = await invite(inviteForm.name, inviteForm.email);
-    if (link) {
-      await navigator.clipboard?.writeText(link);
-      toast.success("Invitation created — setup link copied");
-      inviteOpen.value = false;
-    } else toast.error(error.value || "Could not create invitation");
+
+  const permissionsRole = shallowRef<Role | null>(null);
+  const permissionsText = shallowRef("");
+  const openPermissions = (role: Role) => {
+    permissionsRole.value = role;
+    permissionsText.value = "";
   };
-  const updateRolePermissions = async (key: string) => {
-    const raw = window.prompt("Permission codes, comma-separated", "forms.create, forms.submit");
-    if (raw && (await setPermissions(key, raw.split(/[\s,]+/).filter(Boolean))))
+  const savePermissions = async () => {
+    if (!permissionsRole.value) return;
+    const ok = await setPermissions(
+      permissionsRole.value.key,
+      permissionsText.value.split(/[\s,]+/).filter(Boolean),
+    );
+    if (ok) {
       toast.success("Permissions updated");
+      permissionsRole.value = null;
+    } else toast.error(error.value || "Could not update permissions");
   };
-  const assign = async (key: string) => {
-    const id = window.prompt("User ID to assign");
-    if (id && (await assignRole(key, id))) toast.success("Role assigned");
+
+  const assignRoleKey = shallowRef<Role | null>(null);
+  const assignUserId = shallowRef("");
+  const saveAssignment = async () => {
+    if (!assignRoleKey.value || !assignUserId.value) return;
+    if (await assignRole(assignRoleKey.value.key, assignUserId.value)) {
+      toast.success("Role assigned");
+      assignRoleKey.value = null;
+      assignUserId.value = "";
+    } else toast.error(error.value || "Could not assign role");
   };
 </script>
+
 <template>
-  <Teleport to="#page-actions-target"
-    ><div class="flex gap-2">
-      <Button size="sm" variant="outline" @click="inviteOpen = true">Invite user</Button
-      ><Button size="sm" variant="outline" @click="roleOpen = true">New role</Button
-      ><Button size="sm" @click="open = true">New department</Button>
-    </div></Teleport
-  >
-  <div class="space-y-6">
-    <div>
-      <h1 class="text-xl font-semibold">Access control</h1>
-      <p class="text-muted-foreground mt-1 text-sm">
-        Casbin policies power roles, departments, and protected operations.
-      </p>
-    </div>
-    <div class="grid gap-3 md:grid-cols-3">
-      <Card
-        ><CardContent class="p-5"
-          ><Building2Icon class="text-primary h-5 w-5" />
-          <p class="mt-3 text-2xl font-semibold">{{ departments.length }}</p>
-          <p class="text-muted-foreground text-sm">Departments</p></CardContent
-        ></Card
-      ><Card
-        ><CardContent class="p-5"
-          ><UsersIcon class="text-primary h-5 w-5" />
-          <p class="mt-3 text-2xl font-semibold">{{ activeUsers.length }}</p>
-          <p class="text-muted-foreground text-sm">Active users</p></CardContent
-        ></Card
-      ><Card
-        ><CardContent class="p-5"
-          ><ShieldCheckIcon class="text-primary h-5 w-5" />
-          <p class="mt-3 text-2xl font-semibold">{{ roles.length }}</p>
-          <p class="text-muted-foreground text-sm">Roles</p></CardContent
-        ></Card
-      >
-    </div>
-    <div class="grid gap-5 lg:grid-cols-2">
-      <Card
-        ><CardContent class="p-5"
-          ><h2 class="font-semibold">Departments</h2>
-          <div class="mt-4 divide-y">
-            <div v-for="department in departments" :key="department.id" class="py-3">
-              <p class="text-sm font-medium">{{ department.name }}</p>
-              <p class="text-muted-foreground text-xs">
-                {{ department.description || "No description" }}
+  <Tabs v-model="tab" class="gap-5">
+    <TabsList>
+      <TabsTrigger value="departments">Departments</TabsTrigger>
+      <TabsTrigger value="groups">Groups</TabsTrigger>
+      <TabsTrigger value="roles">Roles</TabsTrigger>
+      <TabsTrigger value="sharing">Sharing policy</TabsTrigger>
+    </TabsList>
+
+    <TabsContent value="departments"><DepartmentsPanel :admin="admin" /></TabsContent>
+    <TabsContent value="groups"><GroupsPanel :admin="admin" /></TabsContent>
+
+    <TabsContent value="roles">
+      <div class="bg-card max-w-3xl rounded-2xl border shadow-sm">
+        <div class="flex items-center justify-between border-b px-4 py-3">
+          <div>
+            <h2 class="text-sm font-semibold">Roles</h2>
+            <p class="text-muted-foreground text-xs">
+              Roles grant app-wide permissions, and files can be shared with everyone holding a
+              role.
+            </p>
+          </div>
+          <Button size="sm" variant="outline" @click="roleOpen = true">New role</Button>
+        </div>
+        <ul class="divide-y">
+          <li v-for="role in roles" :key="role.id" class="flex items-center gap-3 px-4 py-3">
+            <ShieldCheckIcon class="text-muted-foreground size-4 shrink-0" />
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium">{{ role.name }}</p>
+              <p class="text-muted-foreground truncate text-xs">
+                {{ role.description || role.key }}
               </p>
             </div>
-            <p v-if="!loading && !departments.length" class="text-muted-foreground py-6 text-sm">
-              No departments yet.
-            </p>
-          </div></CardContent
-        ></Card
-      ><Card
-        ><CardContent class="p-5"
-          ><h2 class="font-semibold">Roles</h2>
-          <div class="mt-4 space-y-3">
-            <div
-              v-for="role in roles"
-              :key="role.id"
-              class="border-border flex items-center justify-between rounded-lg border p-3"
-            >
-              <div>
-                <p class="text-sm font-medium">{{ role.name }}</p>
-                <p class="text-muted-foreground text-xs">{{ role.description || role.key }}</p>
-              </div>
-              <div class="flex items-center gap-1">
-                <Badge v-if="role.protected" variant="secondary">Protected</Badge
-                ><Button size="sm" variant="ghost" @click="updateRolePermissions(role.key)"
-                  >Permissions</Button
-                ><Button size="sm" variant="ghost" @click="assign(role.key)">Assign</Button>
-              </div>
-            </div>
-          </div></CardContent
-        ></Card
-      >
-    </div>
-  </div>
-  <Dialog v-model:open="open"
-    ><DialogContent
-      ><DialogHeader><DialogTitle>New department</DialogTitle></DialogHeader>
-      <div class="grid gap-4 py-2">
-        <div class="grid gap-2">
-          <Label for="department-name">Name</Label
-          ><Input id="department-name" v-model="form.name" />
+            <Badge v-if="role.protected" variant="secondary">Built in</Badge>
+            <template v-else>
+              <Button size="sm" variant="ghost" @click="openPermissions(role)">Permissions</Button>
+              <Button size="sm" variant="ghost" @click="assignRoleKey = role">Assign</Button>
+            </template>
+          </li>
+        </ul>
+      </div>
+    </TabsContent>
+
+    <TabsContent value="sharing"><SharingPolicyPanel /></TabsContent>
+  </Tabs>
+
+  <Dialog v-model:open="roleOpen">
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader><DialogTitle>New role</DialogTitle></DialogHeader>
+      <form class="space-y-3" @submit.prevent="saveRole">
+        <div class="space-y-1.5">
+          <Label for="role-name">Name</Label>
+          <Input id="role-name" v-model="roleForm.name" placeholder="Procurement Officer" />
         </div>
-        <div class="grid gap-2">
-          <Label for="department-description">Description</Label
-          ><Textarea id="department-description" v-model="form.description" />
+        <div class="space-y-1.5">
+          <Label for="role-key">Key</Label>
+          <Input id="role-key" v-model="roleForm.key" placeholder="procurement_officer" />
         </div>
-      </div>
-      <DialogFooter
-        ><Button variant="outline" @click="open = false">Cancel</Button
-        ><Button :disabled="!form.name.trim()" @click="save"
-          >Create department</Button
-        ></DialogFooter
-      ></DialogContent
-    ></Dialog
+        <div class="space-y-1.5">
+          <Label for="role-description">Description</Label>
+          <Textarea id="role-description" v-model="roleForm.description" />
+        </div>
+        <div class="space-y-1.5">
+          <Label for="role-permissions">Permissions</Label>
+          <Textarea
+            id="role-permissions"
+            v-model="roleForm.permissions"
+            placeholder="forms.create, forms.submit"
+          />
+        </div>
+      </form>
+      <DialogFooter>
+        <Button variant="outline" @click="roleOpen = false">Cancel</Button>
+        <Button :disabled="!roleForm.name.trim() || !roleForm.key.trim()" @click="saveRole"
+          >Create role</Button
+        >
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog
+    :open="Boolean(permissionsRole)"
+    @update:open="(value) => !value && (permissionsRole = null)"
   >
-  <Dialog v-model:open="roleOpen"
-    ><DialogContent
-      ><DialogHeader><DialogTitle>New role</DialogTitle></DialogHeader>
-      <div class="grid gap-3 py-2">
-        <Input v-model="roleForm.name" placeholder="Role name" /><Input
-          v-model="roleForm.key"
-          placeholder="role_key"
-        /><Textarea v-model="roleForm.description" placeholder="Description" /><Textarea
-          v-model="roleForm.permissions"
-          placeholder="forms.create, forms.submit"
-        />
-      </div>
-      <DialogFooter><Button @click="saveRole">Create role</Button></DialogFooter></DialogContent
-    ></Dialog
-  >
-  <Dialog v-model:open="inviteOpen"
-    ><DialogContent
-      ><DialogHeader><DialogTitle>Invite user</DialogTitle></DialogHeader>
-      <div class="grid gap-3 py-2">
-        <Input v-model="inviteForm.name" placeholder="Full name" /><Input
-          v-model="inviteForm.email"
-          type="email"
-          placeholder="email@company.com"
-        />
-      </div>
-      <DialogFooter
-        ><Button @click="sendInvite">Send & copy link</Button></DialogFooter
-      ></DialogContent
-    ></Dialog
-  >
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>Permissions for {{ permissionsRole?.name }}</DialogTitle>
+        <DialogDescription
+          >Replace the role’s permission codes, separated by commas.</DialogDescription
+        >
+      </DialogHeader>
+      <Textarea v-model="permissionsText" placeholder="forms.create, forms.submit" />
+      <DialogFooter>
+        <Button variant="outline" @click="permissionsRole = null">Cancel</Button>
+        <Button @click="savePermissions">Save</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+
+  <Dialog :open="Boolean(assignRoleKey)" @update:open="(value) => !value && (assignRoleKey = null)">
+    <DialogContent class="sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>Assign {{ assignRoleKey?.name }}</DialogTitle>
+        <DialogDescription>A member holds one custom role at a time.</DialogDescription>
+      </DialogHeader>
+      <Select v-model="assignUserId">
+        <SelectTrigger class="w-full"><SelectValue placeholder="Choose a member" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem v-for="user in users" :key="user.id" :value="user.id"
+            >{{ user.name }} · {{ user.email }}</SelectItem
+          >
+        </SelectContent>
+      </Select>
+      <DialogFooter>
+        <Button variant="outline" @click="assignRoleKey = null">Cancel</Button>
+        <Button :disabled="!assignUserId" @click="saveAssignment">Assign</Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

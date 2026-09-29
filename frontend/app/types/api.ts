@@ -673,8 +673,25 @@ export interface LinkDocument {
   expires_at: string;
 }
 
+export interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  member_count: number;
+  created_at: string;
+}
+
+export interface GroupMember {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
 export interface Department {
   id: string;
+  parent_id?: string;
   name: string;
   description?: string;
   created_by: string;

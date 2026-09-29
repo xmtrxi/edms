@@ -28,8 +28,19 @@ func (h *AdministrationHandler) RegisterRoutes(api *echo.Group) {
 	d := g.Group("/departments", middleware.RequirePermission(h.authz, "departments", "manage"))
 	d.GET("", h.listDepartments)
 	d.POST("", h.createDepartment)
+	d.PUT("/:id", h.updateDepartment)
+	d.DELETE("/:id", h.deleteDepartment)
 	d.GET("/:id/members", h.members)
 	d.POST("/:id/members", h.addMember)
+	d.DELETE("/:id/members/:userID", h.removeMember)
+	gr := g.Group("/groups", middleware.RequirePermission(h.authz, "groups", "manage"))
+	gr.GET("", h.listGroups)
+	gr.POST("", h.createGroup)
+	gr.PUT("/:id", h.updateGroup)
+	gr.DELETE("/:id", h.deleteGroup)
+	gr.GET("/:id/members", h.groupMembers)
+	gr.POST("/:id/members", h.addGroupMember)
+	gr.DELETE("/:id/members/:userID", h.removeGroupMember)
 	r := g.Group("/roles", middleware.RequirePermission(h.authz, "roles", "manage"))
 	r.GET("", h.listRoles)
 	r.POST("", h.createRole)
@@ -148,4 +159,90 @@ func (h *AdministrationHandler) roleInOrg(c *echo.Context, orgID, key string) bo
 		}
 	}
 	return false
+}
+
+func (h *AdministrationHandler) updateDepartment(c *echo.Context) error {
+	var r service.DepartmentInput
+	if e := bind(c, &r); e != nil {
+		return e
+	}
+	item, e := h.service.UpdateDepartment(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"), r)
+	if e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(item))
+}
+func (h *AdministrationHandler) deleteDepartment(c *echo.Context) error {
+	if e := h.service.DeleteDepartment(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id")); e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+func (h *AdministrationHandler) removeMember(c *echo.Context) error {
+	if e := h.service.RemoveMember(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"), c.Param("userID")); e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+func (h *AdministrationHandler) listGroups(c *echo.Context) error {
+	items, e := h.service.Groups(c.Request().Context(), middleware.CurrentOrgID(c))
+	if e != nil {
+		return respondError(c, 500, "failed to list groups")
+	}
+	return respondJSON(c, 200, dto.List(items, int64(len(items)), 1, len(items)))
+}
+func (h *AdministrationHandler) createGroup(c *echo.Context) error {
+	var r service.GroupInput
+	if e := bind(c, &r); e != nil {
+		return e
+	}
+	item, e := h.service.CreateGroup(c.Request().Context(), middleware.CurrentOrgID(c), string(middleware.CurrentUser(c).ID), r)
+	if e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(item))
+}
+func (h *AdministrationHandler) updateGroup(c *echo.Context) error {
+	var r service.GroupInput
+	if e := bind(c, &r); e != nil {
+		return e
+	}
+	item, e := h.service.UpdateGroup(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"), r)
+	if e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return respondJSON(c, 200, dto.OK(item))
+}
+func (h *AdministrationHandler) deleteGroup(c *echo.Context) error {
+	if e := h.service.DeleteGroup(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id")); e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+func (h *AdministrationHandler) groupMembers(c *echo.Context) error {
+	items, e := h.service.GroupMembers(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"))
+	if e != nil {
+		return respondError(c, 404, e.Error())
+	}
+	return respondJSON(c, 200, dto.List(items, int64(len(items)), 1, len(items)))
+}
+func (h *AdministrationHandler) addGroupMember(c *echo.Context) error {
+	var r struct {
+		UserID string `json:"user_id"`
+		Role   string `json:"role"`
+	}
+	if e := bind(c, &r); e != nil {
+		return e
+	}
+	item, e := h.service.AddGroupMember(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"), r.UserID, r.Role)
+	if e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return respondJSON(c, http.StatusCreated, dto.Created(item))
+}
+func (h *AdministrationHandler) removeGroupMember(c *echo.Context) error {
+	if e := h.service.RemoveGroupMember(c.Request().Context(), middleware.CurrentOrgID(c), c.Param("id"), c.Param("userID")); e != nil {
+		return respondError(c, 400, e.Error())
+	}
+	return c.NoContent(http.StatusNoContent)
 }
