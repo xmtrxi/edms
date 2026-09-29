@@ -88,31 +88,17 @@ export const foldersService = () => {
     }
   };
 
-  const saveGrant = async (
-    folderId: string,
-    input: FolderGrantInput,
-  ): Promise<FolderGrant | null> => {
+  const saveGrant = async (folderId: string, input: FolderGrantInput): Promise<boolean> => {
     const { $api } = useNuxtApp();
     try {
-      const response = await $api<ApiResponse<FolderGrant>>(`/folders/${folderId}/grants`, {
-        method: "PUT",
-        body: input,
-      });
-      grants.value = [
-        ...grants.value.filter(
-          (grant) =>
-            !(
-              grant.principal_type === response.data.principal_type &&
-              grant.principal_id === response.data.principal_id
-            ),
-        ),
-        response.data,
-      ];
+      await $api(`/folders/${folderId}/grants`, { method: "PUT", body: input });
+      // Reload so the list carries names and inherited grants from the server.
+      await fetchGrants(folderId);
       error.value = "";
-      return response.data;
+      return true;
     } catch (err) {
       error.value = apiErrorMessage(err);
-      return null;
+      return false;
     }
   };
 

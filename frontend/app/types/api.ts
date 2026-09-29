@@ -313,6 +313,10 @@ export interface Document {
   category?: Category;
   current_version_id?: string;
   version_count: number;
+  sensitivity?: Sensitivity;
+  inherit_permissions?: boolean;
+  /** What the signed-in user may do: view, download, comment, edit, share, delete… */
+  permissions?: string[];
 }
 
 export interface DashboardOverview {
@@ -545,6 +549,8 @@ export interface ManagedFolder {
   color?: string;
   inherit_permissions: boolean;
   document_count: number;
+  can_manage?: boolean;
+  can_upload?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -557,27 +563,114 @@ export interface FolderInput {
   inherit_permissions?: boolean;
 }
 
-export type FolderRole = "manager" | "editor" | "contributor" | "viewer" | "uploader";
+export type FolderRole = "manager" | "editor" | "contributor" | "commenter" | "viewer" | "uploader";
 
+export type PrincipalType = "user" | "department" | "group" | "role" | "everyone";
+
+/** A grant as shown in access lists, with a readable principal name. */
 export interface FolderGrant {
   id: string;
-  folder_id: string;
-  principal_type: "user" | "department";
+  principal_type: PrincipalType;
   principal_id: string;
+  name: string;
+  description?: string;
   role: FolderRole;
   allow?: string[];
   deny?: string[];
-  created_by: string;
-  created_at: string;
-  updated_at: string;
+  /** "folder" for this folder, "inherited" from a parent, "document" for file grants. */
+  source: "folder" | "inherited" | "document";
+  source_name?: string;
 }
 
 export interface FolderGrantInput {
-  principal_type: "user" | "department";
+  principal_type: PrincipalType;
   principal_id: string;
   role: FolderRole;
   allow?: string[];
   deny?: string[];
+}
+
+export interface PrincipalOption {
+  type: PrincipalType;
+  id: string;
+  name: string;
+  description?: string;
+}
+
+// ── Sharing ────────────────────────────────────────────────────────────────
+
+export type Sensitivity = "public" | "internal" | "confidential" | "restricted";
+export type ShareRole = "viewer" | "commenter" | "editor";
+
+export interface ShareView {
+  id: string;
+  kind: "user" | "email" | "link";
+  user_id?: string;
+  email?: string;
+  name?: string;
+  role: ShareRole;
+  link_scope?: "organization" | "anyone";
+  has_password: boolean;
+  allow_download: boolean;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface SharePolicy {
+  allow_external: boolean;
+  allow_public_links: boolean;
+  allowed_domains: string[];
+  max_link_days: number;
+}
+
+export interface DocumentAccess {
+  document_id: string;
+  owner_id: string;
+  owner_name: string;
+  folder_id?: string;
+  folder_name?: string;
+  inherit_permissions: boolean;
+  sensitivity: Sensitivity;
+  inherited: FolderGrant[];
+  grants: FolderGrant[];
+  shares: ShareView[];
+  links: ShareView[];
+  policy: SharePolicy;
+  can_share: boolean;
+  pending_requests: number;
+}
+
+export interface ShareResult {
+  kind: "grant" | "user" | "email";
+  link?: string;
+}
+
+export interface AccessRequest {
+  id: string;
+  document_id: string;
+  document_name: string;
+  requester_id: string;
+  requester_name: string;
+  requester_email: string;
+  role: ShareRole;
+  message?: string;
+  status: "pending" | "approved" | "denied";
+  created_at: string;
+}
+
+/** Who can see a new upload. */
+export interface UploadAccess {
+  mode: "inherit" | "private" | "custom";
+  sensitivity?: Sensitivity;
+  grants?: FolderGrantInput[];
+}
+
+export interface LinkDocument {
+  document: Document;
+  role: ShareRole;
+  link_scope?: "organization" | "anyone";
+  can_download: boolean;
+  expires_at: string;
 }
 
 export interface Department {

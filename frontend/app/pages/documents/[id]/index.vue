@@ -6,6 +6,7 @@
     FileTextIcon,
     HistoryIcon,
     Loader2Icon,
+    LockIcon,
     PenLineIcon,
     RefreshCwIcon,
     Share2Icon,
@@ -24,16 +25,15 @@
   import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
-  import { workspaceService } from "@/services/workspace";
   import type {
     CreateDocumentRoute,
     Document,
     DocumentContributors,
     DocumentRoute,
-    DocumentShare,
     DocumentVersion,
     ProcessingJob,
     RouteDecision,
+    ShareRole,
   } from "@/types/api";
   import { formatBytes, formatDateTime, fileTypeFromMime, initialsOf } from "@/utils/format";
 
@@ -50,7 +50,7 @@
   const router = useRouter();
 
   const service = documentsService();
-  const workspace = workspaceService();
+  const sharing = sharingService();
   const docId = computed(() => route.params.id as string);
   const doc = ref<Document | null>(null);
   const versions = ref<DocumentVersion[]>([]);
@@ -66,15 +66,27 @@
   const routeBusy = ref(false);
   const shareOpen = ref(false);
   const signOpen = ref(false);
-  const shareBusy = ref(false);
   const signBusy = ref(false);
-  const documentShares = ref<DocumentShare[]>([]);
-  const createdShareToken = ref("");
+  const noAccess = ref(false);
+  const requestRole = ref<ShareRole>("viewer");
+  const requestMessage = ref("");
+  const requestSent = ref(false);
+  const requesting = ref(false);
+
+  const can = (permission: string) => Boolean(doc.value?.permissions?.includes(permission));
+  const sensitivityLabel: Record<string, string> = {
+    public: "Public",
+    internal: "Internal",
+    confidential: "Confidential",
+    restricted: "Restricted",
+  };
 
   const load = async () => {
     loading.value = true;
     error.value = "";
+    noAccess.value = false;
     doc.value = await service.fetchDocument(docId.value);
+    noAccess.value = !doc.value && service.lastStatus.value === 403;
     if (doc.value) {
       const [loadedVersions, loadedContributors, loadedRoutes] = await Promise.all([
         service.fetchVersions(docId.value),
@@ -87,7 +99,21 @@
       processingJob.value = await service.fetchProcessingJob(docId.value);
     }
     loading.value = false;
-    if (!doc.value) error.value = service.error;
+    if (!doc.value) error.value = service.error.value;
+  };
+
+  const sendAccessRequest = async () => {
+    requesting.value = true;
+    const created = await sharing.requestAccess(docId.value, {
+      role: requestRole.value,
+      message: requestMessage.value.trim(),
+    });
+    requesting.value = false;
+    if (!created) {
+      toast.error(sharing.error.value || "Could not send the request");
+      return;
+    }
+    requestSent.value = true;
   };
 
   load();
@@ -120,7 +146,7 @@
   const handleDownload = async () => {
     if (!doc.value) return;
     await service.download(doc.value.id, doc.value.name);
-    if (service.error) toast.error(service.error);
+    if (service.error.value) toast.error(service.error.value);
   };
 
   const openFullOcr = () => router.push(`/documents/${docId.value}/ocr`);
@@ -134,7 +160,7 @@
       toast.success("OCR re-run queued");
       await load();
     } else {
-      toast.error(service.error || "Could not re-run OCR");
+      toast.error(service.error.value || "Could not re-run OCR");
     }
   };
 
@@ -150,7 +176,7 @@
     if (restored) {
       toast.success(`Version ${version.version} restored as a new version`);
       await load();
-    } else toast.error(service.error || "Could not restore version");
+    } else toast.error(service.error.value || "Could not restore version");
   };
 
   const handleCreateRoute = async (input: CreateDocumentRoute) => {
@@ -161,7 +187,7 @@
     if (created) {
       toast.success("Document route started");
       documentRoutes.value = [created, ...documentRoutes.value];
-    } else toast.error(service.error || "Could not start route");
+    } else toast.error(service.error.value || "Could not start route");
   };
 
   const handleRouteDecision = async (routeId: string, input: RouteDecision) => {
@@ -174,7 +200,7 @@
       documentRoutes.value = documentRoutes.value.map((route) =>
         route.id === updated.id ? updated : route,
       );
-    } else toast.error(service.error || "Could not record routing decision");
+    } else toast.error(service.error.value || "Could not record routing decision");
   };
 
   const handleArchive = async () => {
@@ -186,46 +212,11 @@
       toast.success("Document archived");
       router.push("/documents");
     } else {
-      toast.error(service.error || "Could not archive document");
+      toast.error(service.error.value || "Could not archive document");
     }
   };
-  const openShareDialog = async () => {
+  const openShareDialog = () => {
     shareOpen.value = true;
-    createdShareToken.value = "";
-    shareBusy.value = true;
-    documentShares.value = await workspace.shares(docId.value);
-    shareBusy.value = false;
-  };
-  const createShare = async (input: {
-    email: string;
-    permission: "view" | "download";
-    expires_at?: string;
-  }) => {
-    shareBusy.value = true;
-    const created = await workspace.share(docId.value, input);
-    shareBusy.value = false;
-    if (!created) {
-      toast.error(workspace.error.value || "Could not create share");
-      return;
-    }
-    documentShares.value = [created.share, ...documentShares.value];
-    createdShareToken.value = created.token;
-    toast.success("Secure share created");
-  };
-  const revokeShare = async (shareId: string) => {
-    shareBusy.value = true;
-    await workspace.revokeShare(docId.value, shareId);
-    shareBusy.value = false;
-    if (workspace.error.value) {
-      toast.error(workspace.error.value);
-      return;
-    }
-    documentShares.value = await workspace.shares(docId.value);
-    toast.success("Share revoked");
-  };
-  const copyShareToken = async (token: string) => {
-    await navigator.clipboard.writeText(token);
-    toast.success("Share token copied");
   };
   const requestSignature = async (input: {
     title: string;
@@ -235,7 +226,7 @@
     const request = await service.requestSignature(docId.value, input);
     signBusy.value = false;
     if (!request) {
-      toast.error(service.error || "Could not create signature request");
+      toast.error(service.error.value || "Could not create signature request");
       return;
     }
     signOpen.value = false;
@@ -247,6 +238,58 @@
   <div v-if="loading" class="border-border rounded-xl border border-dashed p-12 text-center">
     <Loader2Icon class="text-primary mx-auto h-6 w-6 animate-spin" />
     <p class="text-muted-foreground mt-3 text-xs">Loading document…</p>
+  </div>
+
+  <div
+    v-else-if="noAccess"
+    class="bg-card mx-auto max-w-md rounded-2xl border p-8 text-center shadow-sm"
+  >
+    <div class="bg-muted mx-auto mb-4 grid size-12 place-items-center rounded-xl">
+      <LockIcon class="text-muted-foreground size-6" />
+    </div>
+    <template v-if="requestSent">
+      <h2 class="text-lg font-semibold">Request sent</h2>
+      <p class="text-muted-foreground mt-2 text-sm">
+        The people who manage this file will see your request. You’ll be able to open it once they
+        approve.
+      </p>
+    </template>
+    <template v-else>
+      <h2 class="text-lg font-semibold">You need access</h2>
+      <p class="text-muted-foreground mt-2 text-sm">
+        This file belongs to your organization, but it hasn’t been shared with you.
+      </p>
+      <form class="mt-5 space-y-3 text-left" @submit.prevent="sendAccessRequest">
+        <div class="space-y-1.5">
+          <Label for="request-role">Access you need</Label>
+          <Select v-model="requestRole">
+            <SelectTrigger id="request-role" class="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="viewer">View</SelectItem>
+              <SelectItem value="commenter">Comment</SelectItem>
+              <SelectItem value="editor">Edit</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div class="space-y-1.5">
+          <Label for="request-message"
+            >Message <span class="text-muted-foreground">(optional)</span></Label
+          >
+          <Textarea
+            id="request-message"
+            v-model="requestMessage"
+            rows="3"
+            placeholder="Why you need it"
+          />
+        </div>
+        <Button type="submit" class="w-full" :disabled="requesting">{{
+          requesting ? "Sending…" : "Request access"
+        }}</Button>
+      </form>
+    </template>
+    <Button variant="ghost" size="sm" class="mt-3" @click="router.push('/documents')"
+      >Back to documents</Button
+    >
   </div>
 
   <div v-else-if="!doc" class="border-border rounded-xl border border-dashed p-12 text-center">
@@ -272,14 +315,38 @@
       <FileTypeIcon :type="fileTypeFromMime(doc.mime_type)" class="h-5 w-5 shrink-0" />
       <h2 class="min-w-0 truncate text-lg font-semibold">{{ doc.name }}</h2>
       <StatusBadges :status="doc.status" />
+      <Badge
+        v-if="doc.sensitivity && doc.sensitivity !== 'internal'"
+        :variant="
+          doc.sensitivity === 'restricted' || doc.sensitivity === 'confidential'
+            ? 'destructive'
+            : 'secondary'
+        "
+        class="gap-1"
+        ><LockIcon v-if="doc.sensitivity === 'restricted'" class="size-3" />{{
+          sensitivityLabel[doc.sensitivity]
+        }}</Badge
+      >
       <div class="ml-auto flex items-center gap-1.5">
-        <Button size="sm" variant="outline" class="gap-1.5" @click="openShareDialog">
-          <Share2Icon class="h-3.5 w-3.5" /> Share
+        <Button
+          size="sm"
+          :variant="can('share') ? 'default' : 'outline'"
+          class="gap-1.5"
+          @click="openShareDialog"
+        >
+          <Share2Icon class="h-3.5 w-3.5" /> {{ can("share") ? "Share" : "Who has access" }}
         </Button>
-        <Button size="sm" variant="outline" class="gap-1.5" @click="signOpen = true">
+        <Button
+          v-if="can('sign')"
+          size="sm"
+          variant="outline"
+          class="gap-1.5"
+          @click="signOpen = true"
+        >
           <PenLineIcon class="h-3.5 w-3.5" /> Sign
         </Button>
         <Button
+          v-if="can('edit')"
           size="sm"
           variant="outline"
           class="gap-1.5"
@@ -289,10 +356,16 @@
           <RefreshCwIcon :class="redoingOcr ? 'animate-spin' : ''" class="h-3.5 w-3.5" />
           Re-run OCR
         </Button>
-        <Button size="sm" variant="outline" class="gap-1.5" @click="handleDownload">
+        <Button
+          v-if="can('download')"
+          size="sm"
+          variant="outline"
+          class="gap-1.5"
+          @click="handleDownload"
+        >
           <CloudDownloadIcon class="h-3.5 w-3.5" /> Download
         </Button>
-        <AlertDialog>
+        <AlertDialog v-if="can('delete')">
           <AlertDialogTrigger as-child>
             <Button
               size="sm"
@@ -473,19 +546,45 @@
 
         <div class="border-border bg-card rounded-xl border p-4">
           <p class="text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
-            Shared with
+            Access
           </p>
-          <div v-if="doc.shared_with?.length" class="space-y-2">
-            <div v-for="u in doc.shared_with" :key="u.id" class="flex items-center gap-2">
-              <Avatar class="h-6 w-6">
-                <AvatarFallback class="bg-secondary text-[10px]">{{
-                  initialsOf(u.name)
-                }}</AvatarFallback>
-              </Avatar>
-              <span class="text-xs font-medium">{{ u.name }}</span>
+          <dl class="space-y-2 text-xs">
+            <div class="flex justify-between gap-3">
+              <dt class="text-muted-foreground">Sensitivity</dt>
+              <dd class="font-medium">{{ sensitivityLabel[doc.sensitivity ?? "internal"] }}</dd>
             </div>
-          </div>
-          <p v-else class="text-muted-foreground text-xs">Not shared.</p>
+            <div class="flex justify-between gap-3">
+              <dt class="text-muted-foreground">Who can open it</dt>
+              <dd class="text-right font-medium">
+                {{
+                  !doc.folder_id
+                    ? "Owner and people it’s shared with"
+                    : doc.inherit_permissions
+                      ? "Follows its folder"
+                      : "Its own access list"
+                }}
+              </dd>
+            </div>
+            <div class="flex justify-between gap-3">
+              <dt class="text-muted-foreground">Your access</dt>
+              <dd class="font-medium">
+                {{
+                  can("share")
+                    ? "Can share"
+                    : can("edit")
+                      ? "Can edit"
+                      : can("comment")
+                        ? "Can comment"
+                        : "Can view"
+                }}
+              </dd>
+            </div>
+          </dl>
+          <Separator class="my-3" />
+          <Button variant="outline" size="sm" class="w-full gap-1.5" @click="openShareDialog">
+            <Share2Icon class="h-3.5 w-3.5" />
+            {{ can("share") ? "Manage access" : "See who has access" }}
+          </Button>
         </div>
 
         <DocumentMetadataPanel :document="doc" />
@@ -495,21 +594,16 @@
   <DocumentShareDialog
     v-if="doc"
     v-model:open="shareOpen"
+    :document-id="doc.id"
     :title="doc.name"
-    :shares="documentShares"
-    :created-token="createdShareToken"
-    :busy="shareBusy"
-    :error="workspace.error.value"
-    @submit="createShare"
-    @revoke="revokeShare"
-    @copy="copyShareToken"
+    @changed="load"
   />
   <DocumentSignDialog
     v-if="doc"
     v-model:open="signOpen"
     :document-title="doc.name"
     :busy="signBusy"
-    :error="service.error"
+    :error="service.error.value"
     @submit="requestSignature"
   />
 </template>

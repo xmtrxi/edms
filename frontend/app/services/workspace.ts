@@ -1,10 +1,4 @@
-import type {
-  ApiResponse,
-  DashboardOverview,
-  Document,
-  DocumentShare,
-  DocumentRoute,
-} from "@/types/api";
+import type { ApiResponse, DashboardOverview, Document, DocumentRoute } from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
 
 export const workspaceService = () => {
@@ -40,18 +34,6 @@ export const workspaceService = () => {
     request<never>(`/documents/${id}/trash`, { method: "POST" });
   const restore = async (id: string) =>
     request<never>(`/documents/${id}/restore`, { method: "POST" });
-  const shares = async (id: string) =>
-    (await request<DocumentShare[]>(`/documents/${id}/shares`)) ?? [];
-  const share = async (
-    id: string,
-    input: { email: string; permission: "view" | "download"; expires_at?: string },
-  ) =>
-    request<{ share: DocumentShare; token: string }>(`/documents/${id}/shares`, {
-      method: "POST",
-      body: input,
-    });
-  const revokeShare = async (documentId: string, shareId: string) =>
-    request<never>(`/documents/${documentId}/shares/${shareId}`, { method: "DELETE" });
   const settings = async () => (await request<Record<string, unknown>>("/settings")) ?? {};
   const saveSettings = async (values: Record<string, unknown>) =>
     request<Record<string, unknown>>("/settings", { method: "PUT", body: values });
@@ -71,9 +53,6 @@ export const workspaceService = () => {
     setFavorite,
     moveToTrash,
     restore,
-    shares,
-    share,
-    revokeShare,
     settings,
     saveSettings,
     storageStatus,

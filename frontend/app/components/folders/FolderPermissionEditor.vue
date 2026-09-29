@@ -1,9 +1,17 @@
 <script setup lang="ts">
-  import { ShieldCheckIcon, Trash2Icon, UserPlusIcon } from "@lucide/vue";
+  import {
+    Building2Icon,
+    GlobeIcon,
+    ShieldCheckIcon,
+    ShieldIcon,
+    Trash2Icon,
+    UserIcon,
+    UsersIcon,
+  } from "@lucide/vue";
 
+  import PrincipalPicker from "@/components/sharing/PrincipalPicker.vue";
   import { Badge } from "@/components/ui/badge";
   import { Button } from "@/components/ui/button";
-  import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
   import {
     Select,
     SelectContent,
@@ -11,47 +19,57 @@
     SelectTrigger,
     SelectValue,
   } from "@/components/ui/select";
-  import type { Department, FolderGrant, FolderGrantInput, FolderRole, User } from "@/types/api";
+  import type {
+    Department,
+    FolderGrant,
+    FolderGrantInput,
+    FolderRole,
+    PrincipalOption,
+    PrincipalType,
+    User,
+  } from "@/types/api";
 
   const props = withDefaults(
     defineProps<{
       grants: FolderGrant[];
-      users: User[];
-      departments: Department[];
       saving?: boolean;
+      /** False hides editing controls for people who can only look. */
+      canManage?: boolean;
+      // Kept for callers that still pass them; names now come with each grant.
+      users?: User[];
+      departments?: Department[];
     }>(),
-    { saving: false },
+    { saving: false, canManage: true },
   );
   const emit = defineEmits<{ save: [input: FolderGrantInput]; remove: [grantId: string] }>();
 
-  const selectedPrincipal = shallowRef("");
-  const selectedRole = shallowRef<FolderRole>("viewer");
   const roles: Array<{ value: FolderRole; label: string; description: string }> = [
     { value: "viewer", label: "Viewer", description: "View and download" },
-    { value: "contributor", label: "Contributor", description: "Upload and comment" },
-    { value: "editor", label: "Editor", description: "Edit and create versions" },
-    { value: "manager", label: "Manager", description: "Manage files and folder access" },
-    { value: "uploader", label: "Uploader", description: "Upload without browsing" },
+    { value: "commenter", label: "Commenter", description: "View and comment" },
+    { value: "contributor", label: "Contributor", description: "Add files and comment" },
+    { value: "editor", label: "Editor", description: "Edit files and create versions" },
+    { value: "manager", label: "Manager", description: "Everything, including sharing" },
+    { value: "uploader", label: "Uploader", description: "Drop files in without browsing" },
   ];
-  const userById = computed(() => new Map(props.users.map((user) => [user.id, user])));
-  const departmentById = computed(
-    () => new Map(props.departments.map((department) => [department.id, department])),
-  );
-  const roleByValue = computed(() => new Map(roles.map((role) => [role.value, role])));
-  const save = () => {
-    const [principalType, principalID] = selectedPrincipal.value.split(":", 2) as [
-      "user" | "department",
-      string,
-    ];
-    if (!principalID) return;
-    emit("save", {
-      principal_type: principalType,
-      principal_id: principalID,
-      role: selectedRole.value,
-    });
-    selectedPrincipal.value = "";
-    selectedRole.value = "viewer";
+  const iconFor: Record<PrincipalType, typeof UserIcon> = {
+    user: UserIcon,
+    department: Building2Icon,
+    group: UsersIcon,
+    role: ShieldIcon,
+    everyone: GlobeIcon,
   };
+
+  const direct = computed(() => props.grants.filter((grant) => grant.source !== "inherited"));
+  const inherited = computed(() => props.grants.filter((grant) => grant.source === "inherited"));
+  const selectedKeys = computed(() =>
+    direct.value.map((grant) => `${grant.principal_type}|${grant.principal_id}`),
+  );
+
+  const add = (option: PrincipalOption) =>
+    emit("save", { principal_type: option.type, principal_id: option.id, role: "viewer" });
+
+  const changeRole = (grant: FolderGrant, role: FolderRole) =>
+    emit("save", { principal_type: grant.principal_type, principal_id: grant.principal_id, role });
 </script>
 
 <template>
@@ -61,98 +79,72 @@
         ><ShieldCheckIcon class="size-4"
       /></span>
       <div>
-        <h3 class="font-semibold">Access</h3>
+        <h3 class="font-semibold">Who has access</h3>
         <p class="text-muted-foreground mt-0.5 text-sm">
-          Direct access is evaluated before inherited parent access.
+          Access here applies to every file and subfolder that follows this folder.
         </p>
       </div>
     </div>
 
-    <div
-      class="bg-muted/35 border-border grid gap-4 border p-4 sm:grid-cols-[minmax(0,1fr)_180px_auto] sm:items-end"
-    >
-      <Field>
-        <FieldLabel>Person</FieldLabel>
-        <Select v-model="selectedPrincipal">
-          <SelectTrigger class="w-full"
-            ><SelectValue placeholder="Choose a person"
+    <PrincipalPicker v-if="canManage" :selected-keys="selectedKeys" @select="add" />
+
+    <ul v-if="direct.length" class="divide-border border-border mt-4 divide-y border-y">
+      <li v-for="grant in direct" :key="grant.id" class="flex items-center gap-3 py-3">
+        <span class="bg-secondary grid size-9 shrink-0 place-items-center rounded-full">
+          <component :is="iconFor[grant.principal_type]" class="size-4" />
+        </span>
+        <div class="min-w-0 flex-1">
+          <p class="truncate text-sm font-medium">{{ grant.name }}</p>
+          <p class="text-muted-foreground truncate text-xs">
+            {{ grant.description ?? (grant.principal_type === "everyone" ? "All members" : "") }}
+          </p>
+        </div>
+        <Select
+          v-if="canManage"
+          :model-value="grant.role"
+          :disabled="saving"
+          @update:model-value="(value) => changeRole(grant, value as FolderRole)"
+        >
+          <SelectTrigger class="h-8 w-36" :aria-label="`Role for ${grant.name}`"
+            ><SelectValue
           /></SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="user in users" :key="user.id" :value="`user:${user.id}`"
-              >{{ user.name }} · {{ user.email }}</SelectItem
-            >
-            <SelectItem
-              v-for="department in departments"
-              :key="department.id"
-              :value="`department:${department.id}`"
-              >{{ department.name }} · Department</SelectItem
-            >
+            <SelectItem v-for="role in roles" :key="role.value" :value="role.value">
+              {{ role.label }}
+            </SelectItem>
           </SelectContent>
         </Select>
-      </Field>
-      <Field>
-        <FieldLabel>Role</FieldLabel>
-        <Select v-model="selectedRole">
-          <SelectTrigger class="w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem v-for="role in roles" :key="role.value" :value="role.value">{{
-              role.label
-            }}</SelectItem>
-          </SelectContent>
-        </Select>
-      </Field>
-      <Button type="button" :disabled="saving || !selectedPrincipal" @click="save"
-        ><UserPlusIcon data-icon="inline-start" /> Add</Button
-      >
-      <FieldDescription class="sm:col-span-3"
-        >{{ roleByValue.get(selectedRole)?.description }}. Adding the same person updates their
-        existing direct role.</FieldDescription
-      >
-    </div>
-
-    <div v-if="grants.length" class="divide-border border-border mt-4 divide-y border-y">
-      <div v-for="grant in grants" :key="grant.id" class="flex items-center gap-3 py-3">
-        <div
-          class="bg-secondary text-secondary-foreground grid size-9 shrink-0 place-items-center rounded-full text-xs font-semibold"
-        >
-          {{
-            (grant.principal_type === "department"
-              ? departmentById.get(grant.principal_id)?.name
-              : userById.get(grant.principal_id)?.name
-            )
-              ?.slice(0, 2)
-              .toUpperCase() ?? "??"
-          }}
-        </div>
-        <div class="min-w-0 flex-1">
-          <p class="truncate text-sm font-medium">
-            {{
-              grant.principal_type === "department"
-                ? (departmentById.get(grant.principal_id)?.name ?? grant.principal_id)
-                : (userById.get(grant.principal_id)?.name ?? grant.principal_id)
-            }}
-          </p>
-          <p class="text-muted-foreground truncate text-xs">
-            {{
-              grant.principal_type === "department"
-                ? "Department"
-                : (userById.get(grant.principal_id)?.email ?? "User")
-            }}
-          </p>
-        </div>
-        <Badge variant="secondary" class="capitalize">{{ grant.role }}</Badge>
+        <Badge v-else variant="secondary" class="capitalize">{{ grant.role }}</Badge>
         <Button
+          v-if="canManage"
           variant="ghost"
           size="icon"
           :disabled="saving"
-          :aria-label="`Remove ${userById.get(grant.principal_id)?.name ?? 'access'}`"
+          :aria-label="`Remove ${grant.name}`"
           @click="emit('remove', grant.id)"
           ><Trash2Icon class="size-4"
         /></Button>
-      </div>
-    </div>
+      </li>
+    </ul>
     <p v-else class="text-muted-foreground mt-4 text-sm">
-      No direct access grants. This folder is private unless it inherits access from its parent.
+      No one has been added to this folder directly.
+      {{
+        inherited.length ? "It uses the access below." : "Only its creator and admins can see it."
+      }}
     </p>
+
+    <div v-if="inherited.length" class="mt-5">
+      <p class="text-muted-foreground mb-2 text-xs font-semibold tracking-wider uppercase">
+        Inherited
+      </p>
+      <ul class="divide-border divide-y">
+        <li v-for="grant in inherited" :key="grant.id" class="flex items-center gap-3 py-2">
+          <component :is="iconFor[grant.principal_type]" class="text-muted-foreground size-4" />
+          <span class="min-w-0 flex-1 truncate text-sm">{{ grant.name }}</span>
+          <span class="text-muted-foreground truncate text-xs">from {{ grant.source_name }}</span>
+          <Badge variant="outline" class="capitalize">{{ grant.role }}</Badge>
+        </li>
+      </ul>
+    </div>
   </section>
 </template>

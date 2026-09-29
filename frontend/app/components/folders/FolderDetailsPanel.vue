@@ -142,8 +142,8 @@
         <div class="pr-5">
           <FieldLabel for="folder-inheritance">Inherit access</FieldLabel>
           <FieldDescription
-            >New subfolders inherit their parent’s permissions. Access grants come in the next Phase
-            1 slice.</FieldDescription
+            >When on, everyone with access to the parent folder can also see this one. Turn it off
+            to make this folder’s access list stand on its own.</FieldDescription
           >
         </div>
         <Switch id="folder-inheritance" v-model="draft.inherit_permissions" />
@@ -166,9 +166,8 @@
     <FolderPermissionEditor
       v-if="folder"
       :grants="grants ?? []"
-      :users="users ?? []"
-      :departments="departments ?? []"
       :saving="saving"
+      :can-manage="folder.can_manage !== false"
       @save="emit('saveGrant', $event)"
       @remove="emit('removeGrant', $event)"
     />

@@ -13,6 +13,7 @@ import type {
   ProcessingJob,
   RouteDecision,
   StorageSyncResult,
+  UploadAccess,
 } from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
 
@@ -21,6 +22,8 @@ export const documentsService = () => {
   const meta = ref<ApiMeta | null>(null);
   const loading = ref(false);
   const error = ref("");
+  /** HTTP status of the last failed fetchDocument, e.g. 403 when access can be requested. */
+  const lastStatus = ref(0);
   let requestSeq = 0;
 
   const fetchDocuments = async (params: ListDocumentsParams = {}): Promise<void> => {
@@ -45,9 +48,11 @@ export const documentsService = () => {
     const { $api } = useNuxtApp();
     try {
       const res = await $api<ApiResponse<Document>>(`/documents/${id}`);
+      lastStatus.value = 0;
       return res.data;
     } catch (err) {
       error.value = apiErrorMessage(err);
+      lastStatus.value = (err as { response?: { status?: number } }).response?.status ?? 0;
       return null;
     }
   };
@@ -249,6 +254,7 @@ export const documentsService = () => {
       folderPath?: string;
       folderColor?: string;
       folderCategoryIds?: string[];
+      access?: UploadAccess;
     } = {},
   ): Promise<Document | null> => {
     const { $api } = useNuxtApp();
@@ -261,6 +267,11 @@ export const documentsService = () => {
     if (options.folderColor) formData.append("folder_color", options.folderColor);
     if (options.folderCategoryIds?.length) {
       formData.append("folder_category_ids", JSON.stringify(options.folderCategoryIds));
+    }
+    if (options.access && options.access.mode !== "inherit") {
+      formData.append("access", JSON.stringify(options.access));
+    } else if (options.access?.sensitivity && options.access.sensitivity !== "internal") {
+      formData.append("access", JSON.stringify(options.access));
     }
     try {
       const res = await $api<ApiResponse<Document>>("/documents", {
@@ -331,6 +342,7 @@ export const documentsService = () => {
     meta,
     loading,
     error,
+    lastStatus,
     fetchDocuments,
     fetchDocument,
     fetchFolders,

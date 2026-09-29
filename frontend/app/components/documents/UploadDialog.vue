@@ -7,14 +7,17 @@
     FileTextIcon,
     ImageIcon,
     PresentationIcon,
+    ChevronDownIcon,
     UploadIcon,
     XIcon,
   } from "@lucide/vue";
   import { ref } from "vue";
   import { toast } from "vue-sonner";
 
+  import UploadAccessPicker from "@/components/sharing/UploadAccessPicker.vue";
   import { Badge } from "@/components/ui/badge";
   import { Button } from "@/components/ui/button";
+  import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
   import {
     Dialog,
     DialogContent,
@@ -37,6 +40,7 @@
   } from "@/components/ui/select";
   import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
   import { cn } from "@/lib/utils";
+  import type { UploadAccess } from "@/types/api";
   import { formatBytes } from "@/utils/format";
 
   const props = withDefaults(defineProps<{ open: boolean; initialFolderPath?: string }>(), {
@@ -53,6 +57,7 @@
     categoryName?: string;
     folderPath?: string;
     folderId?: string;
+    access: UploadAccess;
     error?: string;
   }
 
@@ -71,6 +76,14 @@
   const selectedFolderId = shallowRef("none");
   const folderColor = ref("#6366f1");
   const folderCategoryId = shallowRef("none");
+  const access = ref<UploadAccess>({ mode: "inherit", sensitivity: "internal", grants: [] });
+  const selectedFolder = computed(() =>
+    folders.value.find((folder) => folder.id === selectedFolderId.value),
+  );
+  // Only folders the user can add to are offered as destinations.
+  const uploadableFolders = computed(() =>
+    folders.value.filter((folder) => folder.can_upload !== false),
+  );
 
   const parentCategories = computed(() =>
     categories.value.filter((category) => !category.parent_id),
@@ -100,6 +113,7 @@
       categoryName: selectedCategory.value?.name,
       folderPath: folderPath.value.trim() || undefined,
       folderId: selectedFolderId.value !== "none" ? selectedFolderId.value : undefined,
+      access: JSON.parse(JSON.stringify(access.value)) as UploadAccess,
     }));
     queue.value = [...queue.value, ...items];
     tab.value = "progress";
@@ -125,6 +139,7 @@
           folderColor: folderPath.value.trim() ? folderColor.value : undefined,
           folderCategoryIds:
             folderCategoryId.value !== "none" ? [folderCategoryId.value] : undefined,
+          access: item.access,
         });
         if (doc) {
           item.progress = 100;
@@ -133,7 +148,7 @@
           toast.success(`Processed ${doc.name}`);
         } else {
           item.stage = "failed";
-          item.error = service.error;
+          item.error = service.error.value;
           toast.error(`Failed to upload ${item.file.name}`);
         }
       }
@@ -159,11 +174,11 @@
 
 <template>
   <Dialog :open="open" @update:open="emit('update:open', $event)">
-    <DialogContent class="sm:max-w-xl">
+    <DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
       <DialogHeader>
         <DialogTitle>Upload documents</DialogTitle>
         <DialogDescription
-          >Files are uploaded to your library and processed for OCR.</DialogDescription
+          >Choose where files go and who can see them, then drop them in.</DialogDescription
         >
       </DialogHeader>
 
@@ -184,6 +199,23 @@
         </TabsList>
 
         <TabsContent value="upload" class="mt-4 space-y-4">
+          <Field>
+            <FieldLabel>Destination</FieldLabel>
+            <Select v-model="selectedFolderId">
+              <SelectTrigger class="w-full"
+                ><SelectValue placeholder="Choose a folder"
+              /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">My files</SelectItem>
+                <SelectItem v-for="folder in uploadableFolders" :key="folder.id" :value="folder.id">
+                  {{ "— ".repeat(folder.depth) }}{{ folder.name }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+
+          <UploadAccessPicker v-model="access" :folder="selectedFolder" />
+
           <input ref="input" type="file" multiple class="hidden" @change="onInputChange" />
           <div
             @dragover.prevent="dragOver = true"
@@ -213,117 +245,91 @@
             </p>
           </div>
 
-          <Field>
-            <FieldLabel>Category</FieldLabel>
-            <Select v-model="selectedCategoryId">
-              <SelectTrigger class="w-full">
-                <SelectValue placeholder="Select a category" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="none">Uncategorized</SelectItem>
-                </SelectGroup>
-                <SelectGroup v-if="parentCategories.length">
-                  <SelectLabel>Categories</SelectLabel>
-                  <SelectItem
-                    v-for="category in parentCategories"
-                    :key="category.id"
-                    :value="category.id"
+          <Collapsible>
+            <CollapsibleTrigger
+              class="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs font-medium"
+            >
+              <ChevronDownIcon class="size-3.5" /> Category, folder path and tags
+            </CollapsibleTrigger>
+            <CollapsibleContent class="mt-3 space-y-4">
+              <Field>
+                <FieldLabel>Category</FieldLabel>
+                <Select v-model="selectedCategoryId">
+                  <SelectTrigger class="w-full">
+                    <SelectValue placeholder="Select a category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="none">Uncategorized</SelectItem>
+                    </SelectGroup>
+                    <SelectGroup v-if="parentCategories.length">
+                      <SelectLabel>Categories</SelectLabel>
+                      <SelectItem
+                        v-for="category in parentCategories"
+                        :key="category.id"
+                        :value="category.id"
+                      >
+                        {{ category.name }}
+                      </SelectItem>
+                    </SelectGroup>
+                    <SelectGroup v-if="subcategories.length">
+                      <SelectLabel>Subcategories</SelectLabel>
+                      <SelectItem
+                        v-for="category in subcategories"
+                        :key="category.id"
+                        :value="category.id"
+                      >
+                        {{
+                          parentCategories.find((parent) => parent.id === category.parent_id)?.name
+                        }}
+                        / {{ category.name }}
+                      </SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  Every file added in this batch will be assigned to this category.
+                </FieldDescription>
+              </Field>
+
+              <div class="grid gap-3 sm:grid-cols-[1fr_auto]">
+                <Field>
+                  <FieldLabel>Folder path</FieldLabel>
+                  <Input v-model="folderPath" placeholder="e.g. Finance / 2026 / Invoices" />
+                  <FieldDescription
+                    >Use / to create nested folders. Existing synced paths are
+                    preserved.</FieldDescription
                   >
-                    {{ category.name }}
-                  </SelectItem>
-                </SelectGroup>
-                <SelectGroup v-if="subcategories.length">
-                  <SelectLabel>Subcategories</SelectLabel>
-                  <SelectItem
-                    v-for="category in subcategories"
-                    :key="category.id"
-                    :value="category.id"
-                  >
-                    {{ parentCategories.find((parent) => parent.id === category.parent_id)?.name }}
-                    / {{ category.name }}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FieldDescription>
-              Every file added in this batch will be assigned to this category.
-            </FieldDescription>
-          </Field>
-
-          <Field>
-            <FieldLabel>Destination folder</FieldLabel>
-            <Select v-model="selectedFolderId">
-              <SelectTrigger class="w-full"
-                ><SelectValue placeholder="Choose a folder"
-              /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No managed folder</SelectItem>
-                <SelectItem v-for="folder in folders" :key="folder.id" :value="folder.id">
-                  {{ "— ".repeat(folder.depth) }}{{ folder.name }}
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <FieldDescription
-              >Managed folders keep documents and permissions organized. Legacy paths remain
-              available for storage sync.</FieldDescription
-            >
-          </Field>
-
-          <div class="grid gap-3 sm:grid-cols-[1fr_auto]">
-            <Field>
-              <FieldLabel>Folder path</FieldLabel>
-              <Input v-model="folderPath" placeholder="e.g. Finance / 2026 / Invoices" />
-              <FieldDescription
-                >Use / to create nested folders. Existing synced paths are
-                preserved.</FieldDescription
-              >
-            </Field>
-            <Field class="sm:w-28">
-              <FieldLabel>Color</FieldLabel>
-              <Input v-model="folderColor" type="color" class="h-9 cursor-pointer p-1" />
-            </Field>
-          </div>
-
-          <Field>
-            <FieldLabel>Folder tag</FieldLabel>
-            <Select v-model="folderCategoryId">
-              <SelectTrigger class="w-full"
-                ><SelectValue placeholder="No folder tag"
-              /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No folder tag</SelectItem>
-                <SelectItem
-                  v-for="category in categories"
-                  :key="category.id"
-                  :value="category.id"
-                  >{{ category.name }}</SelectItem
-                >
-              </SelectContent>
-            </Select>
-            <FieldDescription
-              >Tag the destination folder for quick filtering and organization.</FieldDescription
-            >
-          </Field>
-
-          <div class="grid grid-cols-2 gap-2">
-            <div
-              v-for="fmt in [
-                { label: 'PDF', icon: FileTextIcon, desc: 'Documents, contracts' },
-                { label: 'Excel', icon: FileSpreadsheetIcon, desc: 'Spreadsheets' },
-                { label: 'PowerPoint', icon: PresentationIcon, desc: 'Presentations' },
-                { label: 'Images', icon: ImageIcon, desc: 'PNG, JPG, WebP' },
-              ]"
-              :key="fmt.label"
-              class="border-border bg-secondary/30 flex items-center gap-2 rounded-lg border px-3 py-2"
-            >
-              <component :is="fmt.icon" class="text-muted-foreground h-4 w-4" />
-              <div>
-                <p class="text-xs font-medium">{{ fmt.label }}</p>
-                <p class="text-muted-foreground text-[10px]">{{ fmt.desc }}</p>
+                </Field>
+                <Field class="sm:w-28">
+                  <FieldLabel>Color</FieldLabel>
+                  <Input v-model="folderColor" type="color" class="h-9 cursor-pointer p-1" />
+                </Field>
               </div>
-            </div>
-          </div>
+
+              <Field>
+                <FieldLabel>Folder tag</FieldLabel>
+                <Select v-model="folderCategoryId">
+                  <SelectTrigger class="w-full"
+                    ><SelectValue placeholder="No folder tag"
+                  /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No folder tag</SelectItem>
+                    <SelectItem
+                      v-for="category in categories"
+                      :key="category.id"
+                      :value="category.id"
+                      >{{ category.name }}</SelectItem
+                    >
+                  </SelectContent>
+                </Select>
+                <FieldDescription
+                  >Tag the destination folder for quick filtering and
+                  organization.</FieldDescription
+                >
+              </Field>
+            </CollapsibleContent>
+          </Collapsible>
         </TabsContent>
 
         <TabsContent value="progress" class="mt-4 space-y-3">
