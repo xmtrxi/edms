@@ -92,7 +92,12 @@ func (h *SearchHandler) search(c *echo.Context) error {
 	return respondJSON(c, http.StatusOK, dto.List(items, result.Total, result.Page, result.PageSize))
 }
 
+// reindex rebuilds the index for every organization, so on SaaS it is an
+// operator task and on self-hosted installs it needs an organization admin.
 func (h *SearchHandler) reindex(c *echo.Context) error {
+	if h.auth.Orgs.Capabilities().IsSaaS() || !middleware.IsOrgAdmin(c) {
+		return respondError(c, http.StatusForbidden, "only an administrator of a self-hosted installation can rebuild the index")
+	}
 	if !h.service.Enabled() {
 		return respondError(c, http.StatusBadRequest, "search is not configured")
 	}
