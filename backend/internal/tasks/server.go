@@ -23,6 +23,7 @@ func NewServer(cfg config.Config, db *surrealdb.DB, ocr *service.OCRService, sea
 	}
 
 	t := New(cfg, ocr, search, service.NewOperationsService(db, cfg.SMTP), logger)
+	t.labels = service.NewLabelService(db, ocr.Storage(), service.NewAIProvider(cfg.AI), logger)
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(queue.TaskOCR, t.OCRDocument)
 	mux.HandleFunc(queue.TaskReindex, t.Reindex)

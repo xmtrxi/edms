@@ -8,6 +8,7 @@ import (
 )
 
 type Tasks struct {
+	labels *service.LabelService
 	ocr    *service.OCRService
 	search *service.SearchService
 	email  *service.OperationsService

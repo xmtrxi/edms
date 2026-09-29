@@ -57,5 +57,16 @@ export const aiService = () => {
       loading.value = false;
     }
   };
-  return { loading, error, run, job, answer };
+  const label = async (documentId: string) => {
+    const { $api } = useNuxtApp();
+    try {
+      await $api(`/ai/documents/${documentId}/label`, { method: "POST" });
+      error.value = "";
+      return true;
+    } catch (reason) {
+      error.value = apiErrorMessage(reason);
+      return false;
+    }
+  };
+  return { loading, error, run, job, answer, label };
 };

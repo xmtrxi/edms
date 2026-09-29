@@ -12,15 +12,19 @@ import (
 )
 
 type AIHandler struct {
-	auth *service.AuthService
-	ai   *service.AIService
+	auth   *service.AuthService
+	ai     *service.AIService
+	docs   *service.DocumentService
+	labels *service.LabelService
 }
 
 func NewAIHandler(deps Deps) *AIHandler {
 	search := service.NewSearchService(deps.Client(), deps.Storage, deps.Search, deps.Logger)
 	return &AIHandler{
-		auth: service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
-		ai:   service.NewAIService(deps.Client(), deps.Cfg.AI).WithSearch(search),
+		auth:   service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
+		ai:     service.NewAIService(deps.Client(), deps.Cfg.AI).WithSearch(search),
+		docs:   service.NewDocumentService(deps.Cfg, deps.Client(), deps.Storage, deps.Queue, deps.Search, deps.Logger),
+		labels: service.NewLabelService(deps.Client(), deps.Storage, service.NewAIProvider(deps.Cfg.AI), deps.Logger),
 	}
 }
 func (h *AIHandler) RegisterRoutes(api *echo.Group) {
@@ -31,6 +35,7 @@ func (h *AIHandler) RegisterRoutes(api *echo.Group) {
 	g.POST("/extract", h.run("extract"))
 	g.GET("/jobs/:id", h.job)
 	g.POST("/answer", h.answer)
+	g.POST("/documents/:id/label", h.label)
 }
 func (h *AIHandler) run(kind string) echo.HandlerFunc {
 	return func(c *echo.Context) error {
@@ -73,4 +78,21 @@ func (h *AIHandler) answer(c *echo.Context) error {
 		return respondError(c, http.StatusBadRequest, err.Error())
 	}
 	return respondJSON(c, http.StatusOK, dto.OK(result))
+}
+
+// label re-runs sensitive-data detection (and AI labelling when configured)
+// for one document the user can edit.
+func (h *AIHandler) label(c *echo.Context) error {
+	ctx := c.Request().Context()
+	if _, err := h.docs.GetFor(ctx, actor(c), "edit", c.Param("id")); err != nil {
+		return respondError(c, http.StatusForbidden, "you cannot edit this document")
+	}
+	if err := h.labels.Process(ctx, c.Param("id")); err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	doc, err := h.docs.Get(ctx, actor(c), c.Param("id"))
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "labelled, but the document could not be reloaded")
+	}
+	return respondJSON(c, http.StatusOK, dto.OK(dto.NewDocumentResponse(doc)))
 }

@@ -43,6 +43,9 @@ func NewOCRService(db *surrealdb.DB, provider storage.Provider, d *docling.Clien
 	return &OCRService{DB: db, storage: provider, docling: d, office: office, search: s, log: logger}
 }
 
+// Storage is the provider holding documents and OCR artifacts.
+func (s *OCRService) Storage() storage.Provider { return s.storage }
+
 func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath, versionID, checksum, generationID, queuedJobID string) error {
 	if s.docling == nil {
 		return fmt.Errorf("docling client is not configured")

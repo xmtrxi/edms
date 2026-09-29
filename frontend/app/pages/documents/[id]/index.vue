@@ -9,7 +9,9 @@
     LockIcon,
     PenLineIcon,
     RefreshCwIcon,
+    ScanSearchIcon,
     Share2Icon,
+    SparklesIcon,
   } from "@lucide/vue";
   import { useIntervalFn } from "@vueuse/core";
   import { computed, ref, watch } from "vue";
@@ -80,6 +82,59 @@
     internal: "Internal",
     confidential: "Confidential",
     restricted: "Restricted",
+  };
+
+  // Labelling runs after OCR and only ever suggests a stricter label.
+  const ai = aiService();
+  const piiLabels: Record<string, string> = {
+    card_number: "card numbers",
+    kra_pin: "KRA PINs",
+    national_id: "ID numbers",
+    passport: "passport numbers",
+    iban: "bank account numbers",
+    email: "email addresses",
+    phone: "phone numbers",
+  };
+  const suggestedSensitivity = computed(() => {
+    const value = doc.value?.metadata?.suggested_sensitivity;
+    return typeof value === "string" && value !== doc.value?.sensitivity ? value : "";
+  });
+  const detected = computed(() => {
+    const found = (doc.value?.metadata?.detected_pii ?? {}) as Record<string, number>;
+    return Object.entries(found)
+      .filter(([kind]) => piiLabels[kind])
+      .map(([kind, count]) => `${count} ${piiLabels[kind]}`);
+  });
+  const aiSummary = computed(() => {
+    const value = doc.value?.metadata?.ai_summary;
+    return typeof value === "string" ? value : "";
+  });
+  const labelling = ref(false);
+  const applySuggestion = async () => {
+    if (!doc.value || !suggestedSensitivity.value) return;
+    const updated = await sharing.updateSettings(doc.value.id, {
+      sensitivity: suggestedSensitivity.value as "confidential",
+    });
+    if (!updated) {
+      toast.error(sharing.error.value || "Could not change the label");
+      return;
+    }
+    toast.success(`Marked as ${sensitivityLabel[suggestedSensitivity.value]}`);
+    await load();
+  };
+  const scan = async () => {
+    if (!doc.value) return;
+    labelling.value = true;
+    const ok = await ai.label(doc.value.id);
+    labelling.value = false;
+    if (!ok) {
+      toast.error(ai.error.value || "Could not scan this document");
+      return;
+    }
+    await load();
+    toast.success(
+      detected.value.length ? `Found ${detected.value.join(", ")}` : "No sensitive data found",
+    );
   };
 
   const load = async () => {
@@ -358,6 +413,17 @@
           Re-run OCR
         </Button>
         <Button
+          v-if="can('edit')"
+          size="sm"
+          variant="outline"
+          class="gap-1.5"
+          :disabled="labelling"
+          title="Look for personal and financial data"
+          @click="scan"
+        >
+          <ScanSearchIcon class="h-3.5 w-3.5" :class="labelling && 'animate-pulse'" /> Scan
+        </Button>
+        <Button
           v-if="can('download')"
           size="sm"
           variant="outline"
@@ -392,6 +458,29 @@
           </AlertDialogContent>
         </AlertDialog>
       </div>
+    </div>
+
+    <div
+      v-if="suggestedSensitivity && can('share')"
+      role="status"
+      class="border-warning/40 bg-warning/10 mb-4 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-sm"
+    >
+      <LockIcon class="size-4 shrink-0" />
+      <span class="min-w-0 flex-1">
+        This file contains {{ detected.join(", ") }}. Consider marking it
+        {{ sensitivityLabel[suggestedSensitivity] }} so it can’t be shared publicly.
+      </span>
+      <Button size="sm" variant="outline" @click="applySuggestion">
+        Mark {{ sensitivityLabel[suggestedSensitivity] }}
+      </Button>
+    </div>
+    <div v-if="aiSummary" class="bg-card mb-4 rounded-xl border px-4 py-3 text-sm">
+      <p
+        class="text-muted-foreground mb-1 flex items-center gap-1.5 text-xs font-semibold tracking-wider uppercase"
+      >
+        <SparklesIcon class="size-3.5" /> Summary
+      </p>
+      <p class="leading-relaxed">{{ aiSummary }}</p>
     </div>
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
