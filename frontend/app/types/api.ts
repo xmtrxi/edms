@@ -755,3 +755,21 @@ export interface ApiToken {
   /** Only returned when the token is created. */
   secret?: string;
 }
+
+// ── Assistant ──────────────────────────────────────────────────────────────
+
+export interface AICitation {
+  index: number;
+  document_id: string;
+  document_name: string;
+  version_id?: string;
+  page_start?: number;
+  page_end?: number;
+  snippet: string;
+}
+
+export interface AIAnswer {
+  answer: string;
+  citations: AICitation[];
+  sources: AICitation[];
+}

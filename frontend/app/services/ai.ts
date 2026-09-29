@@ -1,4 +1,4 @@
-import type { AIJob, ApiResponse } from "@/types/api";
+import type { AIAnswer, AIJob, ApiResponse } from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
 
 export const aiService = () => {
@@ -34,5 +34,28 @@ export const aiService = () => {
       return null;
     }
   };
-  return { loading, error, run, job };
+  /** Answers from documents the user can open, with citations. */
+  const answer = async (input: {
+    question: string;
+    folder_id?: string;
+    document_ids?: string[];
+  }): Promise<{ data: AIAnswer | null; status: number }> => {
+    const { $api } = useNuxtApp();
+    loading.value = true;
+    try {
+      const response = await $api<ApiResponse<AIAnswer>>("/ai/answer", {
+        method: "POST",
+        body: input,
+      });
+      error.value = "";
+      return { data: response.data, status: 200 };
+    } catch (reason) {
+      error.value = apiErrorMessage(reason);
+      const status = (reason as { response?: { status?: number } }).response?.status ?? 0;
+      return { data: null, status };
+    } finally {
+      loading.value = false;
+    }
+  };
+  return { loading, error, run, job, answer };
 };

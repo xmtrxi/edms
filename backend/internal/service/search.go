@@ -63,6 +63,8 @@ type SearchItem struct {
 	Document database.Document
 	Snippet  string
 	Passage  SearchPassage
+	// Content is the whole matching chunk when search returns passages.
+	Content string
 }
 
 type SearchPassage struct {
@@ -175,7 +177,7 @@ func (s *SearchService) searchMeili(ctx context.Context, in SearchInput) (*Searc
 			if accessErr != nil || !allowed {
 				continue
 			}
-			items = append(items, SearchItem{Document: doc, Snippet: hit.Snippet, Passage: SearchPassage{
+			items = append(items, SearchItem{Document: doc, Snippet: hit.Snippet, Content: hit.Content, Passage: SearchPassage{
 				VersionID: hit.VersionID, ChunkIndex: hit.ChunkIndex, Headings: hit.Headings,
 				PageNumbers: hit.PageNumbers, PageStart: hit.PageStart, PageEnd: hit.PageEnd,
 			}})

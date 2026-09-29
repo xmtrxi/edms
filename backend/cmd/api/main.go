@@ -94,6 +94,9 @@ func main() {
 		searchClient = search.New(cfg.Search)
 	}
 
+	if searchClient != nil && cfg.AI.EmbeddingDimensions > 0 && cfg.AI.EmbeddingModel != "" {
+		searchClient.EnableSemantic(cfg.AI.EmbeddingDimensions, service.NewAIProvider(cfg.AI).Embed)
+	}
 	if searchClient != nil {
 		if err := searchClient.Configure(ctx); err != nil {
 			logger.Error("configure search", "error", err)

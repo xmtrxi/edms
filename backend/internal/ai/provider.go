@@ -29,6 +29,8 @@ type Provider interface {
 	Classify(context.Context, DocumentContext) (Classification, error)
 	Ask(context.Context, string, []DocumentContext) (Answer, error)
 	Embed(context.Context, []string) ([][]float32, error)
+	// Complete answers a single prompt; callers own the prompt wording.
+	Complete(context.Context, string) (string, error)
 }
 
 type DisabledProvider struct{}
@@ -43,4 +45,8 @@ func (DisabledProvider) Ask(context.Context, string, []DocumentContext) (Answer,
 
 func (DisabledProvider) Embed(context.Context, []string) ([][]float32, error) {
 	return nil, ErrDisabled
+}
+
+func (DisabledProvider) Complete(context.Context, string) (string, error) {
+	return "", ErrDisabled
 }

@@ -98,6 +98,9 @@ type AIConfig struct {
 	APIKey         string
 	ChatModel      string
 	EmbeddingModel string
+	// EmbeddingDimensions enables hybrid search when set to the model's
+	// vector size (for example 1536). Zero keeps keyword search only.
+	EmbeddingDimensions int
 }
 type Config struct {
 	App             AppConfig
@@ -190,11 +193,12 @@ func Load(env string) Config {
 			Index:  getEnvDefault("MEILI_INDEX", "documents"),
 		},
 		AI: AIConfig{
-			Enabled:        getEnvBool("AI_ENABLED", false),
-			BaseURL:        getEnv("AI_BASE_URL"),
-			APIKey:         getEnv("AI_API_KEY"),
-			ChatModel:      getEnv("AI_CHAT_MODEL"),
-			EmbeddingModel: getEnv("AI_EMBEDDING_MODEL"),
+			Enabled:             getEnvBool("AI_ENABLED", false),
+			BaseURL:             getEnv("AI_BASE_URL"),
+			APIKey:              getEnv("AI_API_KEY"),
+			ChatModel:           getEnv("AI_CHAT_MODEL"),
+			EmbeddingModel:      getEnv("AI_EMBEDDING_MODEL"),
+			EmbeddingDimensions: getEnvInt("AI_EMBEDDING_DIMENSIONS", 0),
 		},
 	}
 }

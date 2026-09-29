@@ -19,7 +19,28 @@ const indexBatchSize = 500
 type Client struct {
 	inner meilisearch.ServiceManager
 	index string
+	// Optional semantic search. When set, chunks are indexed with vectors
+	// and queries run as hybrid keyword + vector searches.
+	embed      EmbedFunc
+	dimensions int
 }
+
+// EmbedFunc turns texts into vectors with the configured AI provider.
+type EmbedFunc func(ctx context.Context, texts []string) ([][]float32, error)
+
+// embedderName is the Meilisearch embedder that holds our vectors.
+const embedderName = "default"
+
+// EnableSemantic turns on hybrid search with vectors of the given size.
+func (c *Client) EnableSemantic(dimensions int, embed EmbedFunc) {
+	if c == nil || dimensions <= 0 || embed == nil {
+		return
+	}
+	c.embed, c.dimensions = embed, dimensions
+}
+
+// Semantic reports whether hybrid search is enabled.
+func (c *Client) Semantic() bool { return c != nil && c.embed != nil }
 
 func New(cfg config.SearchConfig) *Client {
 	return &Client{inner: meilisearch.New(cfg.URL, meilisearch.WithAPIKey(cfg.APIKey)), index: cfg.Index}
@@ -56,6 +77,8 @@ type DocumentChunk struct {
 	Status       string    `json:"status"`
 	Content      string    `json:"content"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// Vectors holds the chunk embedding when semantic search is enabled.
+	Vectors map[string][]float32 `json:"_vectors,omitempty"`
 }
 
 func chunkID(chunk DocumentChunk) string {
@@ -77,7 +100,7 @@ func (c *Client) Configure(ctx context.Context) error {
 			return fmt.Errorf("create search index: %w", err)
 		}
 	}
-	task, err := c.inner.Index(c.index).UpdateSettingsWithContext(ctx, indexSettings())
+	task, err := c.inner.Index(c.index).UpdateSettingsWithContext(ctx, c.settings())
 	if err != nil {
 		return fmt.Errorf("configure search index: %w", err)
 	}
@@ -91,6 +114,39 @@ func indexSettings() *meilisearch.Settings {
 		DisplayedAttributes:  []string{"id", "document_id", "version_id", "generation_id", "chunk_index", "title", "filename", "headings", "page_numbers", "page_start", "page_end", "org_id", "owner_id", "folder_id", "mime_type", "extension", "ocr_engine", "status", "content", "updated_at"},
 		SortableAttributes:   []string{"updated_at", "title", "page_start", "chunk_index"},
 		RankingRules:         []string{"words", "typo", "proximity", "attribute", "sort", "exactness"},
+	}
+}
+
+func (c *Client) settings() *meilisearch.Settings {
+	settings := indexSettings()
+	if c.Semantic() {
+		settings.Embedders = map[string]meilisearch.Embedder{
+			embedderName: {Source: meilisearch.EmbedderSource("userProvided"), Dimensions: c.dimensions},
+		}
+	}
+	return settings
+}
+
+// attachVectors embeds chunk contents in batches. Failing to embed leaves the
+// chunks keyword-searchable rather than failing the whole index job.
+func (c *Client) attachVectors(ctx context.Context, chunks []DocumentChunk) {
+	if !c.Semantic() {
+		return
+	}
+	const batch = 32
+	for start := 0; start < len(chunks); start += batch {
+		end := min(start+batch, len(chunks))
+		texts := make([]string, 0, end-start)
+		for _, chunk := range chunks[start:end] {
+			texts = append(texts, strings.TrimSpace(chunk.Title+"\n"+chunk.Content))
+		}
+		vectors, err := c.embed(ctx, texts)
+		if err != nil || len(vectors) != len(texts) {
+			return
+		}
+		for i := range texts {
+			chunks[start+i].Vectors = map[string][]float32{embedderName: vectors[i]}
+		}
 	}
 }
 
@@ -109,6 +165,7 @@ func (c *Client) IndexChunks(ctx context.Context, chunks []DocumentChunk) error 
 }
 
 func (c *Client) indexChunks(ctx context.Context, index string, chunks []DocumentChunk) error {
+	c.attachVectors(ctx, chunks)
 	pk := "id"
 	for start := 0; start < len(chunks); start += indexBatchSize {
 		end := min(start+indexBatchSize, len(chunks))
@@ -145,7 +202,7 @@ func (c *Client) ReplaceAll(ctx context.Context, chunks []DocumentChunk) error {
 			_ = c.waitForTask(context.Background(), task.TaskUID)
 		}
 	}
-	settingsTask, err := c.inner.Index(tempIndex).UpdateSettingsWithContext(ctx, indexSettings())
+	settingsTask, err := c.inner.Index(tempIndex).UpdateSettingsWithContext(ctx, c.settings())
 	if err != nil {
 		cleanup()
 		return err
@@ -248,6 +305,8 @@ type Hit struct {
 	Status       string
 	Snippet      string
 	UpdatedAt    time.Time
+	// Content is the whole chunk, for answering questions from it.
+	Content string
 }
 
 type SearchResult struct {
@@ -286,6 +345,12 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 	if in.Mode != "passages" {
 		req.Distinct = "document_id"
 	}
+	if c.Semantic() && strings.TrimSpace(in.Query) != "" {
+		if vectors, err := c.embed(ctx, []string{in.Query}); err == nil && len(vectors) == 1 {
+			req.Hybrid = &meilisearch.SearchRequestHybrid{Embedder: embedderName, SemanticRatio: 0.5}
+			req.Vector = vectors[0]
+		}
+	}
 	if in.Sort != "" {
 		req.Sort = []string{in.Sort}
 	}
@@ -309,7 +374,7 @@ func (c *Client) Search(ctx context.Context, in SearchInput) (*SearchResult, err
 			ChunkIndex: chunk.ChunkIndex, Title: chunk.Title, Filename: chunk.Filename,
 			Headings: chunk.Headings, PageNumbers: chunk.PageNumbers, PageStart: chunk.PageStart,
 			PageEnd: chunk.PageEnd, MimeType: chunk.MimeType, Status: chunk.Status,
-			Snippet: bestSnippet(formatted, chunk), UpdatedAt: chunk.UpdatedAt,
+			Snippet: bestSnippet(formatted, chunk), UpdatedAt: chunk.UpdatedAt, Content: chunk.Content,
 		})
 	}
 	return &SearchResult{Hits: hits, TotalHits: res.TotalHits, Page: in.Page, PageSize: in.PageSize}, nil

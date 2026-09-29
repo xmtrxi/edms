@@ -80,7 +80,7 @@
     { title: "Categories", url: "/categories", icon: TagIcon },
     { title: "Workflows", url: "/workflows", icon: WorkflowIcon },
     { title: "Forms", url: "/forms", icon: ClipboardListIcon },
-    { title: "AI Insights", url: "/ai-insights", icon: SparklesIcon },
+    { title: "Ask", url: "/ai-insights", icon: SparklesIcon },
     { title: "SharePoint", url: "/sharepoint", icon: CloudIcon },
   ]);
 

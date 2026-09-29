@@ -13,6 +13,7 @@
     SearchIcon,
     Share2Icon,
     ShieldCheckIcon,
+    SparklesIcon,
     Trash2Icon,
     UploadCloudIcon,
     XIcon,
@@ -342,6 +343,11 @@
           </button>
         </template>
       </nav>
+      <Button v-if="folderId" variant="outline" size="sm" class="h-9 gap-1.5" as-child
+        ><NuxtLink :to="`/ai-insights?folder=${encodeURIComponent(folderId)}`"
+          ><SparklesIcon class="size-4" />Ask about this folder</NuxtLink
+        ></Button
+      >
       <div class="relative w-full sm:w-64">
         <SearchIcon class="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
         <Input

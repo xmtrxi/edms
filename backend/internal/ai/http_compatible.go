@@ -80,6 +80,10 @@ func (p *HTTPCompatibleProvider) Embed(ctx context.Context, texts []string) ([][
 	return items, nil
 }
 
+func (p *HTTPCompatibleProvider) Complete(ctx context.Context, prompt string) (string, error) {
+	return p.chat(ctx, prompt)
+}
+
 func (p *HTTPCompatibleProvider) chat(ctx context.Context, prompt string) (string, error) {
 	payload := map[string]any{"model": p.chatModel, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.1}
 	var response struct {

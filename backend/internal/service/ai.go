@@ -21,14 +21,26 @@ type AIInput struct {
 type AIService struct {
 	db       *surrealdb.DB
 	provider applicationai.Provider
+	search   *SearchService
+}
+
+// NewAIProvider returns the configured model adapter, or one that reports
+// AI as disabled.
+func NewAIProvider(cfg config.AIConfig) applicationai.Provider {
+	if cfg.Enabled && cfg.BaseURL != "" {
+		return applicationai.NewHTTPCompatibleProvider(cfg.BaseURL, cfg.APIKey, cfg.ChatModel, cfg.EmbeddingModel, nil)
+	}
+	return applicationai.DisabledProvider{}
 }
 
 func NewAIService(db *surrealdb.DB, cfg config.AIConfig) *AIService {
-	var provider applicationai.Provider = applicationai.DisabledProvider{}
-	if cfg.Enabled && cfg.BaseURL != "" {
-		provider = applicationai.NewHTTPCompatibleProvider(cfg.BaseURL, cfg.APIKey, cfg.ChatModel, cfg.EmbeddingModel, nil)
-	}
-	return &AIService{db: db, provider: provider}
+	return &AIService{db: db, provider: NewAIProvider(cfg)}
+}
+
+// WithSearch lets the assistant retrieve passages for answers.
+func (s *AIService) WithSearch(search *SearchService) *AIService {
+	s.search = search
+	return s
 }
 
 func (s *AIService) Run(ctx context.Context, actor, kind string, input AIInput) (*database.AIJob, error) {
