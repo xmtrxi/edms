@@ -55,7 +55,12 @@ func (s *OperationsService) QueueEmail(ctx context.Context, actor, recipient, su
 		return nil, fmt.Errorf("recipient, subject and body are required")
 	}
 	now := time.Now().UTC()
-	item, err := surrealdb.Create[database.EmailDelivery](ctx, s.db, "email_deliveries", &database.EmailDelivery{OrgID: orgOf(ctx), Recipient: strings.ToLower(strings.TrimSpace(recipient)), Subject: strings.TrimSpace(subject), Body: body, Status: "queued", CreatedBy: actor, CreatedAt: now, UpdatedAt: now})
+	// A map, not the struct: a zero delivered_at would be sent as NULL, which
+	// the optional datetime column rejects.
+	item, err := surrealdb.Create[database.EmailDelivery](ctx, s.db, "email_deliveries", map[string]any{
+		"org_id": orgOf(ctx), "recipient": strings.ToLower(strings.TrimSpace(recipient)), "subject": strings.TrimSpace(subject),
+		"body": body, "status": "queued", "attempts": 0, "created_by": actor, "created_at": now, "updated_at": now,
+	})
 	if err != nil {
 		return nil, err
 	}
