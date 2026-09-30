@@ -903,3 +903,55 @@ export interface EditorSession {
   mode: "edit" | "view";
   config: Record<string, unknown>;
 }
+
+// ── Automation and retention ───────────────────────────────────────────────
+
+export type AutomationTrigger =
+  | "document.created"
+  | "document.labelled"
+  | "version.created"
+  | "signature.completed";
+export type AutomationActionType = "move_to_folder" | "set_sensitivity" | "grant_access" | "notify";
+
+export interface AutomationCondition {
+  name_contains?: string;
+  extensions?: string[];
+  sensitivity?: Sensitivity | "";
+  classification?: string;
+  sensitive_data?: boolean;
+}
+
+export interface AutomationAction {
+  type: AutomationActionType;
+  folder_id?: string;
+  sensitivity?: Sensitivity;
+  principal_type?: PrincipalType;
+  principal_id?: string;
+  principal_name?: string;
+  role?: ShareRole;
+  emails?: string[];
+  message?: string;
+}
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  folder_id?: string;
+  conditions: AutomationCondition;
+  actions: AutomationAction[];
+  run_count: number;
+  last_run_at?: string;
+  created_at: string;
+}
+
+export interface AutomationRun {
+  id: string;
+  rule_id: string;
+  document_id: string;
+  trigger: AutomationTrigger;
+  status: "ok" | "failed";
+  detail?: string;
+  created_at: string;
+}

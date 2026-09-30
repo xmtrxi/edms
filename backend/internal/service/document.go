@@ -215,6 +215,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	}
 
 	s.stageOCR(ctx, created, version)
+	fireAutomation(ctx, database.TriggerDocumentCreated, created)
 
 	return created, false, nil
 }

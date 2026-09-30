@@ -219,6 +219,11 @@ func (s *VersionService) AddVersion(ctx context.Context, userID, documentID stri
 	doc.CurrentVersionID, doc.StoragePath, doc.Checksum = string(version.ID), path, checksum
 	s.docs.stageOCR(ctx, doc, version)
 	publishDocument(ctx, documentID, "version.created", map[string]any{"version_id": string(version.ID), "version": next, "source": source, "summary": summary})
+	if source == database.VersionSourceSignature {
+		fireAutomation(ctx, database.TriggerSignatureCompleted, doc)
+	} else {
+		fireAutomation(ctx, database.TriggerVersionCreated, doc)
+	}
 	return version, true, nil
 }
 

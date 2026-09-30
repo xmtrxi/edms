@@ -164,8 +164,12 @@ func (s *LabelService) Process(ctx context.Context, documentID string) error {
 		s.log.Warn("summarize document", "document_id", documentID, "error", err)
 	}
 	metadata["labelled_at"] = time.Now().UTC().Format(time.RFC3339)
-	_, err = surrealdb.Merge[database.Document](ctx, s.db, rid, map[string]any{"metadata": metadata})
-	return err
+	updated, err := surrealdb.Merge[database.Document](ctx, s.db, rid, map[string]any{"metadata": metadata})
+	if err != nil {
+		return err
+	}
+	fireAutomation(ctx, database.TriggerDocumentLabelled, updated)
+	return nil
 }
 
 // text reads the full extracted text, falling back to the stored excerpt.

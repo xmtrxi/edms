@@ -19,6 +19,7 @@
     ShieldCheckIcon,
     HistoryIcon,
     SignatureIcon,
+    ZapIcon,
   } from "@lucide/vue";
   import { onMounted, shallowRef } from "vue";
   import { useRoute } from "vue-router";
@@ -72,6 +73,7 @@
   const admin = ref<NavItem[]>([
     { title: "Folders", url: "/admin/folders", icon: FolderOpenIcon },
     { title: "Teams & access", url: "/admin/access", icon: ShieldCheckIcon },
+    { title: "Automation", url: "/admin/automation", icon: ZapIcon },
     { title: "Members", url: "/users", icon: UsersIcon },
     { title: "Audit Log", url: "/audit", icon: HistoryIcon },
   ]);

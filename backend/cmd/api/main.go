@@ -132,6 +132,9 @@ func main() {
 	service.UseRealtime(live)
 	go live.Run(ctx)
 
+	backgroundDocs := service.NewDocumentService(cfg, db.Client(), provider, queueClient, searchClient, logger)
+	service.UseAutomation(service.NewAutomationService(cfg, db.Client(), backgroundDocs, service.NewOperationsService(db.Client(), cfg.SMTP, queueClient), logger))
+
 	server := api.New(cfg, handler.Deps{
 		Cfg:     cfg,
 		Logger:  logger,
