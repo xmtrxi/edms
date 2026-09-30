@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/valkey-io/valkey-go"
+
 	"github.com/xmtrxi/edms/internal/api"
 	"github.com/xmtrxi/edms/internal/cache"
 	"github.com/xmtrxi/edms/internal/config"
@@ -17,6 +19,7 @@ import (
 	"github.com/xmtrxi/edms/internal/gotenberg"
 	"github.com/xmtrxi/edms/internal/handler"
 	"github.com/xmtrxi/edms/internal/queue"
+	"github.com/xmtrxi/edms/internal/realtime"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/service"
 	"github.com/xmtrxi/edms/internal/storage"
@@ -121,6 +124,14 @@ func main() {
 		}()
 	}
 
+	var valkeyClient valkey.Client
+	if cacheClient != nil {
+		valkeyClient = cacheClient.Client
+	}
+	live := realtime.New(valkeyClient, logger)
+	service.UseRealtime(live)
+	go live.Run(ctx)
+
 	server := api.New(cfg, handler.Deps{
 		Cfg:     cfg,
 		Logger:  logger,
@@ -130,6 +141,8 @@ func main() {
 		Queue:   queueClient,
 		Search:  searchClient,
 		Office:  gotenbergClient,
+
+		Realtime: live,
 	})
 	if err := server.Start(ctx); err != nil {
 		logger.Error("api server stopped", "error", err)

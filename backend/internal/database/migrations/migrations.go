@@ -34,5 +34,6 @@ func Migrations() []surrealgoorm.Migration {
 		addDriveFeatures{},
 		addAgentAccounts{},
 		addNativeSigning{},
+		addCollaboration{},
 	}
 }

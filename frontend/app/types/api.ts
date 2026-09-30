@@ -871,3 +871,29 @@ export interface SigningSession {
   waiting_on?: string;
   fields: SignatureField[];
 }
+
+// ── Comments ───────────────────────────────────────────────────────────────
+
+export interface PersonRef {
+  id: string;
+  name: string;
+  email?: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  document_id: string;
+  parent_id?: string;
+  author: PersonRef;
+  body: string;
+  page?: number;
+  quote?: string;
+  mentions?: PersonRef[];
+  edited: boolean;
+  resolved: boolean;
+  resolved_by?: PersonRef;
+  resolved_at?: string;
+  created_at: string;
+  can_edit: boolean;
+  can_resolve: boolean;
+}

@@ -1,10 +1,42 @@
 <script setup lang="ts">
   import { ChevronRightIcon } from "@lucide/vue";
+  import { toast } from "vue-sonner";
 
   import { SidebarProvider } from "@/components/ui/sidebar";
 
   const route = useRoute();
+  const router = useRouter();
+  const auth = useAuthStore();
   const pageMeta = computed(() => route.meta as Record<string, any>);
+
+  // Tell people when someone mentions them, wherever they are in the app.
+  const { subscribe } = useRealtime();
+  let stop: (() => void) | undefined;
+  watch(
+    () => auth.user?.id,
+    (id) => {
+      stop?.();
+      stop = undefined;
+      if (!id) return;
+      stop = subscribe(`user:${id}`, (event) => {
+        if (event.type !== "mention") return;
+        const data = event.data as {
+          document_id: string;
+          document_name: string;
+          comment: { author: { name: string }; body: string };
+        };
+        toast(`${data.comment.author.name} mentioned you on ${data.document_name}`, {
+          description: data.comment.body.slice(0, 140),
+          action: {
+            label: "Open",
+            onClick: () => void router.push(`/documents/${data.document_id}#comments`),
+          },
+        });
+      });
+    },
+    { immediate: true },
+  );
+  onBeforeUnmount(() => stop?.());
 </script>
 
 <template>

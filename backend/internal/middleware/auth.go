@@ -29,12 +29,17 @@ func RequireAuth(auth *service.AuthService) echo.MiddlewareFunc {
 			}
 
 			header := c.Request().Header.Get(echo.HeaderAuthorization)
-			if header == "" || !strings.HasPrefix(header, "Bearer ") {
+			bearer, ok := strings.CutPrefix(header, "Bearer ")
+			if !ok {
+				// Browsers can't set headers on WebSockets, so the token rides
+				// in the subprotocol list instead of the URL, which gets logged.
+				bearer, ok = websocketToken(c.Request())
+			}
+			if !ok || bearer == "" {
 				return echo.NewHTTPError(http.StatusUnauthorized, "missing bearer token")
 			}
 
 			ctx := c.Request().Context()
-			bearer := strings.TrimPrefix(header, "Bearer ")
 			var claims service.TokenClaims
 			var user *database.User
 			if strings.HasPrefix(bearer, service.APITokenPrefix) {
@@ -115,6 +120,26 @@ func IsOrgAdmin(c *echo.Context) bool {
 func CurrentAPIToken(c *echo.Context) *database.APIToken {
 	token, _ := c.Get(tokenKey).(*database.APIToken)
 	return token
+}
+
+// WebSocketProtocol is offered by browsers as the first subprotocol, followed
+// by their access token.
+const WebSocketProtocol = "edms.v1"
+
+func websocketToken(r *http.Request) (string, bool) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return "", false
+	}
+	var protocols []string
+	for _, value := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for _, part := range strings.Split(value, ",") {
+			protocols = append(protocols, strings.TrimSpace(part))
+		}
+	}
+	if len(protocols) < 2 || protocols[0] != WebSocketProtocol {
+		return "", false
+	}
+	return protocols[1], true
 }
 
 func safeMethod(method string) bool {

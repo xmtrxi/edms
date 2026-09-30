@@ -14,10 +14,11 @@
     SparklesIcon,
   } from "@lucide/vue";
   import { useIntervalFn } from "@vueuse/core";
-  import { computed, ref, watch } from "vue";
+  import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
   import { useRoute, useRouter } from "vue-router";
   import { toast } from "vue-sonner";
 
+  import DocumentComments from "@/components/documents/DocumentComments.vue";
   import DocumentMetadataPanel from "@/components/documents/DocumentMetadataPanel.vue";
   import DocumentOcrViewer from "@/components/documents/DocumentOcrViewer.vue";
   import DocumentProcessingPanel from "@/components/documents/DocumentProcessingPanel.vue";
@@ -71,6 +72,21 @@
   const shareOpen = ref(false);
   const signatures = signaturesService();
   const envelopes = ref<SignatureEnvelope[]>([]);
+  const auth = useAuthStore();
+  const viewers = usePresence(computed(() => (docId.value ? `document:${docId.value}` : "")));
+
+  // Someone else saved a new version (in the editor, by upload or by
+  // signing): refresh so this page shows it.
+  const { subscribe } = useRealtime();
+  let stopLive: (() => void) | undefined;
+  onMounted(() => {
+    stopLive = subscribe(`document:${docId.value}`, (event) => {
+      if (event.type !== "version.created") return;
+      void load();
+      if (event.actor?.id !== auth.user?.id) toast.info("A new version was saved");
+    });
+  });
+  onBeforeUnmount(() => stopLive?.());
   const noAccess = ref(false);
   const requestRole = ref<ShareRole>("viewer");
   const requestMessage = ref("");
@@ -372,6 +388,19 @@
         }}</Badge
       >
       <div class="ml-auto flex items-center gap-1.5">
+        <div
+          v-if="viewers.length"
+          class="mr-1 flex items-center"
+          :title="`Also here: ${viewers.map((item) => item.name).join(', ')}`"
+        >
+          <span
+            v-for="person in viewers.slice(0, 3)"
+            :key="person.id"
+            class="bg-primary/10 text-primary -ml-1.5 grid size-7 place-items-center rounded-full border-2 border-white text-[10px] font-semibold first:ml-0"
+            >{{ initialsOf(person.name) }}</span
+          >
+          <span class="sr-only">{{ viewers.length }} other people have this open</span>
+        </div>
         <Button
           size="sm"
           :variant="can('share') ? 'default' : 'outline'"
@@ -562,6 +591,7 @@
             @changed="load"
           />
         </section>
+        <DocumentComments :document-id="doc.id" :can-comment="can('comment')" />
         <div class="border-border bg-card rounded-xl border p-4">
           <p class="text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
             Owner

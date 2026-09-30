@@ -12,6 +12,7 @@ require (
 	github.com/digitorus/pdfsign v0.9.0
 	github.com/fxamacker/cbor/v2 v2.9.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/hibiken/asynq v0.26.0
 	github.com/hibiken/asynqmon v0.7.2
 	github.com/kemboi22/surreal-go-orm v0.0.0-20260917093316-b4651f508e9e
@@ -52,7 +53,6 @@ require (
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hhrutter/tiff v1.0.6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mattetti/filebuffer v1.0.1 // indirect

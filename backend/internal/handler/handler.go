@@ -13,6 +13,7 @@ import (
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/gotenberg"
 	"github.com/xmtrxi/edms/internal/queue"
+	"github.com/xmtrxi/edms/internal/realtime"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/storage"
 )
@@ -27,6 +28,8 @@ type Deps struct {
 	Search  *search.Client
 	// Office converts Office files to PDF for previews; nil when not configured.
 	Office *gotenberg.Client
+	// Realtime pushes live events to browsers; nil disables live updates.
+	Realtime *realtime.Hub
 }
 
 func (d Deps) Client() *surrealdb.DB {
