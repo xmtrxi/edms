@@ -897,3 +897,9 @@ export interface DocumentComment {
   can_edit: boolean;
   can_resolve: boolean;
 }
+
+export interface EditorSession {
+  document_server_url: string;
+  mode: "edit" | "view";
+  config: Record<string, unknown>;
+}

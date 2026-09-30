@@ -42,6 +42,7 @@ func (h *HealthHandler) health(c *echo.Context) error {
 			"ai":             h.deps.Cfg.AI.Enabled,
 			"visitor_access": true,
 			"esign":          true,
+			"editor":         h.deps.Cfg.Editor.Enabled(),
 			"realtime":       h.deps.Realtime != nil,
 		},
 		"checks": checks,

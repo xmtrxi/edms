@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/dto"
+	"github.com/xmtrxi/edms/internal/editor"
 	"github.com/xmtrxi/edms/internal/middleware"
 	"github.com/xmtrxi/edms/internal/service"
 	"github.com/xmtrxi/edms/internal/signing"
@@ -63,6 +65,7 @@ func (h *DocumentsHandler) RegisterRoutes(api *echo.Group) {
 	g := api.Group("/documents", middleware.RequireAuth(h.auth))
 	g.GET("", h.list)
 	g.POST("", h.upload)
+	g.POST("/blank", h.createBlank)
 	g.POST("/sync", h.sync)
 	g.GET("/folders", h.folders)
 	g.GET("/:id", h.get)
@@ -333,6 +336,58 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 	if duplicate {
 		return respondJSON(c, http.StatusOK, dto.WithMessage(response, "duplicate file already exists; upload skipped"))
 	}
+	return respondJSON(c, http.StatusCreated, dto.Created(response))
+}
+
+// createBlank makes a new empty document, spreadsheet or presentation that
+// opens straight in the editor. Access follows the folder unless given.
+func (h *DocumentsHandler) createBlank(c *echo.Context) error {
+	var input struct {
+		Kind     string                `json:"kind"`
+		Name     string                `json:"name"`
+		FolderID string                `json:"folder_id"`
+		Access   *service.UploadAccess `json:"access"`
+	}
+	if err := bind(c, &input); err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+	user := middleware.CurrentUser(c)
+	input.FolderID = strings.TrimSpace(input.FolderID)
+	if input.FolderID != "" {
+		if err := h.access.RequireFolder(ctx, string(user.ID), "upload", input.FolderID); err != nil {
+			return respondError(c, http.StatusForbidden, "you do not have upload access to this folder")
+		}
+	}
+	var access service.UploadAccess
+	if input.Access != nil {
+		access = *input.Access
+		if status, message := h.validateUploadAccess(c, input.FolderID, &access); status != 0 {
+			return respondError(c, status, message)
+		}
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		name = map[string]string{editor.KindDocument: "Untitled document", editor.KindSpreadsheet: "Untitled spreadsheet", editor.KindPresentation: "Untitled presentation"}[input.Kind]
+	}
+	file, err := editor.Blank(input.Kind, name, firstNonEmptyString(user.Name, user.Email))
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	if !strings.EqualFold(filepath.Ext(name), file.Extension) {
+		name += file.Extension
+	}
+	doc, _, err := h.docs.Upload(ctx, service.UploadInput{
+		OrgID: middleware.CurrentOrgID(c), Access: access, OwnerID: string(user.ID), FolderID: input.FolderID,
+		Name: name, MimeType: file.MimeType, File: bytes.NewReader(file.Body), Metadata: map[string]any{"source": "blank"},
+	})
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidGrant) {
+			return respondError(c, http.StatusBadRequest, err.Error())
+		}
+		return respondError(c, http.StatusInternalServerError, "failed to create the document")
+	}
+	response := dto.NewDocumentResponse(doc).WithOwner(user).WithPermissions(h.permissions(c, doc))
 	return respondJSON(c, http.StatusCreated, dto.Created(response))
 }
 

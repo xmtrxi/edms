@@ -1,0 +1,29 @@
+# ONLYOFFICE Docs for editing in the browser.
+#
+#   JWT_SECRET=change-me docker compose -f docker-compose.onlyoffice.yml up -d
+#
+# Then set in backend/.env:
+#   ONLYOFFICE_URL=http://localhost:8082
+#   ONLYOFFICE_API_URL=http://host.docker.internal:8080/api
+#   ONLYOFFICE_JWT_SECRET=<the same secret>
+services:
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      JWT_HEADER: Authorization
+      # Lets ONLYOFFICE download from and call back to an API on a private address.
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - onlyoffice-data:/var/www/onlyoffice/Data
+      - onlyoffice-logs:/var/log/onlyoffice
+
+volumes:
+  onlyoffice-data:
+  onlyoffice-logs:

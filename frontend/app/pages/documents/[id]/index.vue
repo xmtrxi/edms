@@ -8,6 +8,7 @@
     Loader2Icon,
     LockIcon,
     PenLineIcon,
+    SquarePenIcon,
     RefreshCwIcon,
     ScanSearchIcon,
     Share2Icon,
@@ -41,6 +42,7 @@
     SignatureEnvelope,
   } from "@/types/api";
   import { formatBytes, formatDateTime, fileTypeFromMime, initialsOf } from "@/utils/format";
+  import { canEditInBrowser, canOpenInEditor } from "@/utils/office";
 
   definePageMeta({
     title: "Document",
@@ -72,8 +74,12 @@
   const shareOpen = ref(false);
   const signatures = signaturesService();
   const envelopes = ref<SignatureEnvelope[]>([]);
+  const features = useFeatures();
   const auth = useAuthStore();
   const viewers = usePresence(computed(() => (docId.value ? `document:${docId.value}` : "")));
+  const editorLabel = computed(() =>
+    doc.value && canEditInBrowser(doc.value.name) && can("edit") ? "Edit" : "Open in editor",
+  );
 
   // Someone else saved a new version (in the editor, by upload or by
   // signing): refresh so this page shows it.
@@ -401,6 +407,17 @@
           >
           <span class="sr-only">{{ viewers.length }} other people have this open</span>
         </div>
+        <Button
+          v-if="features?.editor && canOpenInEditor(doc.name)"
+          size="sm"
+          variant="outline"
+          class="gap-1.5"
+          as-child
+        >
+          <NuxtLink :to="`/documents/${doc.id}/edit`">
+            <SquarePenIcon class="h-3.5 w-3.5" /> {{ editorLabel }}
+          </NuxtLink>
+        </Button>
         <Button
           size="sm"
           :variant="can('share') ? 'default' : 'outline'"

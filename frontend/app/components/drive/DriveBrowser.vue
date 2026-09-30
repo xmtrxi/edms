@@ -4,7 +4,11 @@
     CloudDownloadIcon,
     FolderIcon,
     FolderInputIcon,
+    FileSpreadsheetIcon,
+    FileTextIcon,
     FolderPlusIcon,
+    PlusIcon,
+    PresentationIcon,
     InboxIcon,
     LayoutGridIcon,
     ListIcon,
@@ -55,6 +59,25 @@
   const emit = defineEmits<{ navigate: [folderId: string] }>();
 
   const router = useRouter();
+  const features = useFeatures();
+
+  // New Office files open straight in the editor.
+  const creating = shallowRef(false);
+  const createBlank = async (kind: "document" | "spreadsheet" | "presentation") => {
+    creating.value = true;
+    const { $api } = useNuxtApp();
+    try {
+      const res = await $api<{ data: { id: string } }>("/documents/blank", {
+        method: "POST",
+        body: { kind, folder_id: props.folderId || undefined },
+      });
+      await router.push(`/documents/${res.data.id}/edit`);
+    } catch (err) {
+      toast.error(apiErrorMessage(err));
+    } finally {
+      creating.value = false;
+    }
+  };
   const uploads = useUploadStore();
   const folderService = foldersService();
   const documentService = documentsService();
@@ -343,6 +366,30 @@
           </button>
         </template>
       </nav>
+      <DropdownMenu v-if="canUploadHere">
+        <DropdownMenuTrigger as-child>
+          <Button size="sm" class="h-9 gap-1.5" :disabled="creating"
+            ><PlusIcon class="size-4" />New</Button
+          >
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" class="w-52">
+          <DropdownMenuItem @click="openNewFolder"
+            ><FolderPlusIcon class="size-4" />Folder</DropdownMenuItem
+          >
+          <template v-if="features?.editor">
+            <DropdownMenuSeparator />
+            <DropdownMenuItem @click="createBlank('document')"
+              ><FileTextIcon class="size-4 text-blue-600" />Document</DropdownMenuItem
+            >
+            <DropdownMenuItem @click="createBlank('spreadsheet')"
+              ><FileSpreadsheetIcon class="size-4 text-emerald-600" />Spreadsheet</DropdownMenuItem
+            >
+            <DropdownMenuItem @click="createBlank('presentation')"
+              ><PresentationIcon class="size-4 text-orange-600" />Presentation</DropdownMenuItem
+            >
+          </template>
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button v-if="folderId" variant="outline" size="sm" class="h-9 gap-1.5" as-child
         ><NuxtLink :to="`/ai-insights?folder=${encodeURIComponent(folderId)}`"
           ><SparklesIcon class="size-4" />Ask about this folder</NuxtLink

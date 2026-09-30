@@ -27,6 +27,21 @@ type DeploymentConfig struct {
 
 // UploadConfig controls resumable uploads. Chunks are staged in Dir, which
 // must be shared by all API instances behind a load balancer.
+// EditorConfig connects ONLYOFFICE Docs for editing in the browser.
+type EditorConfig struct {
+	// URL is where browsers load ONLYOFFICE from, e.g. https://office.example.com.
+	URL string
+	// InternalURL is where this API reaches ONLYOFFICE, when different.
+	InternalURL string
+	// APIURL is where ONLYOFFICE reaches this API to fetch files and save
+	// changes, including the /api prefix, e.g. http://edms-api:8080/api.
+	APIURL    string
+	JWTSecret string
+}
+
+// Enabled reports whether browser editing is configured.
+func (c EditorConfig) Enabled() bool { return c.URL != "" && c.APIURL != "" && c.JWTSecret != "" }
+
 type UploadConfig struct {
 	Dir      string
 	MaxBytes int64
@@ -125,6 +140,7 @@ type Config struct {
 	SMTP            SMTPConfig
 	Search          SearchConfig
 	AI              AIConfig
+	Editor          EditorConfig
 }
 
 func Load(env string) Config {
@@ -135,6 +151,12 @@ func Load(env string) Config {
 			Port: getEnvDefault("APP_PORT", "8080"),
 		},
 		Deployment: loadDeployment(),
+		Editor: EditorConfig{
+			URL:         strings.TrimRight(getEnv("ONLYOFFICE_URL"), "/"),
+			InternalURL: strings.TrimRight(getEnv("ONLYOFFICE_INTERNAL_URL"), "/"),
+			APIURL:      strings.TrimRight(getEnv("ONLYOFFICE_API_URL"), "/"),
+			JWTSecret:   getEnv("ONLYOFFICE_JWT_SECRET"),
+		},
 		Uploads: UploadConfig{
 			Dir:      getEnvDefault("UPLOAD_TMP_DIR", filepath.Join(os.TempDir(), "edms-uploads")),
 			MaxBytes: int64(getEnvInt("UPLOAD_MAX_MB", 10240)) * 1024 * 1024,
