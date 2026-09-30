@@ -33,5 +33,6 @@ func Migrations() []surrealgoorm.Migration {
 		addAccessModel{},
 		addDriveFeatures{},
 		addAgentAccounts{},
+		addNativeSigning{},
 	}
 }

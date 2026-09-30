@@ -65,6 +65,12 @@ type SigningConfig struct {
 	DocumensoBaseURL       string
 	DocumensoAPIKey        string
 	DocumensoWebhookSecret string
+	// Built-in signing seals completed documents with this certificate. When
+	// unset, a self-signed one is created and kept in storage.
+	SealCertFile string
+	SealKeyFile  string
+	SealName     string
+	TSAURL       string
 }
 type CacheConfig struct {
 	URL string
@@ -166,6 +172,10 @@ func Load(env string) Config {
 			DocumensoBaseURL:       getEnv("DOCUMENSO_BASE_URL"),
 			DocumensoAPIKey:        getEnv("DOCUMENSO_API_KEY"),
 			DocumensoWebhookSecret: getEnv("DOCUMENSO_WEBHOOK_SECRET"),
+			SealCertFile:           getEnv("ESIGN_SEAL_CERT_FILE"),
+			SealKeyFile:            getEnv("ESIGN_SEAL_KEY_FILE"),
+			SealName:               getEnvDefault("ESIGN_SEAL_NAME", "Lumen DMS"),
+			TSAURL:                 getEnv("ESIGN_TSA_URL"),
 		},
 		Cache: CacheConfig{
 			URL: getEnv("VALKEY_URL"),

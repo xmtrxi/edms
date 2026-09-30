@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/gotenberg"
 	"github.com/xmtrxi/edms/internal/storage"
 )
@@ -79,6 +80,12 @@ func (s *PreviewService) Open(ctx context.Context, userID, documentID string) (*
 	if err != nil {
 		return nil, err
 	}
+	return s.Rendition(ctx, doc)
+}
+
+// Rendition opens the viewable form of doc's current version. Callers check
+// access first.
+func (s *PreviewService) Rendition(ctx context.Context, doc *database.Document) (*Preview, error) {
 	kind, convert := PreviewKind(doc.MimeType, doc.Name)
 	if kind == "" {
 		return nil, ErrNoPreview
