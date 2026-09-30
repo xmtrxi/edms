@@ -22,6 +22,8 @@ type Server struct {
 func New(cfg config.Config, deps handler.Deps) *Server {
 	e := echo.NewWithConfig(echo.Config{
 		NoGroupAutoRegister404Routes: true,
+		// Record IDs contain a colon, which clients encode in paths.
+		Router: echo.NewRouter(echo.RouterConfig{UnescapePathParamValues: true}),
 	})
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())

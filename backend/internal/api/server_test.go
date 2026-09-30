@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/labstack/echo/v5"
+
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/handler"
 )
@@ -128,5 +130,19 @@ func TestOpenAPIDocsAreServed(t *testing.T) {
 	}
 	if !strings.Contains(docsRec.Body.String(), "SwaggerUIBundle") {
 		t.Fatalf("expected swagger ui html, got %q", docsRec.Body.String())
+	}
+}
+
+func TestEncodedRecordIDsInPaths(t *testing.T) {
+	e := echo.NewWithConfig(echo.Config{Router: echo.NewRouter(echo.RouterConfig{UnescapePathParamValues: true})})
+	var got string
+	e.GET("/comments/:id", func(c *echo.Context) error {
+		got = c.Param("id")
+		return c.NoContent(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/comments/comments%3Aabc", nil)
+	e.ServeHTTP(httptest.NewRecorder(), req)
+	if got != "comments:abc" {
+		t.Fatalf("param = %q, want comments:abc", got)
 	}
 }
