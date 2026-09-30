@@ -775,3 +775,99 @@ export interface AIAnswer {
   citations: AICitation[];
   sources: AICitation[];
 }
+
+// ── Signatures ─────────────────────────────────────────────────────────────
+
+export type SignatureFieldKind = "signature" | "initials" | "date" | "name" | "text" | "checkbox";
+export type EnvelopeStatus = "sent" | "completed" | "declined" | "voided";
+export type RecipientStatus = "waiting" | "sent" | "viewed" | "signed" | "declined";
+
+export interface SignatureRecipient {
+  id: string;
+  name: string;
+  email: string;
+  role: "signer" | "viewer";
+  position: number;
+  status: RecipientStatus;
+  viewed_at?: string;
+  signed_at?: string;
+  declined_at?: string;
+  decline_reason?: string;
+  /** Only included for the sender while the request is open. */
+  link?: string;
+}
+
+export interface SignatureField {
+  id: string;
+  recipient_id: string;
+  kind: SignatureFieldKind;
+  page: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  required: boolean;
+  label?: string;
+  filled: boolean;
+  value?: string;
+}
+
+export interface SignatureEvent {
+  action: string;
+  actor?: string;
+  detail?: string;
+  ip?: string;
+  created_at: string;
+}
+
+export interface SignatureEnvelope {
+  id: string;
+  document_id: string;
+  document_name?: string;
+  title: string;
+  message?: string;
+  status: EnvelopeStatus;
+  sequential: boolean;
+  require_otp: boolean;
+  pages: number;
+  created_by: string;
+  sender_name?: string;
+  completed_version_id?: string;
+  completed_at?: string;
+  void_reason?: string;
+  expires_at: string;
+  created_at: string;
+  recipients: SignatureRecipient[];
+  fields?: SignatureField[];
+  events?: SignatureEvent[];
+  signing_link?: string;
+}
+
+export interface EnvelopeDraft {
+  title: string;
+  message: string;
+  sequential: boolean;
+  require_otp: boolean;
+  recipients: Array<{ name: string; email: string; role: "signer" | "viewer" }>;
+  fields: Array<{
+    recipient: number;
+    kind: SignatureFieldKind;
+    page: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    required?: boolean;
+    label?: string;
+  }>;
+}
+
+export interface SigningSession {
+  envelope: SignatureEnvelope;
+  recipient: SignatureRecipient;
+  organization?: string;
+  verified: boolean;
+  can_sign: boolean;
+  waiting_on?: string;
+  fields: SignatureField[];
+}

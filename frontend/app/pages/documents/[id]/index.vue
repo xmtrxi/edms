@@ -23,9 +23,9 @@
   import DocumentProcessingPanel from "@/components/documents/DocumentProcessingPanel.vue";
   import DocumentRoutingPanel from "@/components/documents/DocumentRoutingPanel.vue";
   import DocumentShareDialog from "@/components/documents/DocumentShareDialog.vue";
-  import DocumentSignDialog from "@/components/documents/DocumentSignDialog.vue";
   import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
+  import EnvelopeCard from "@/components/signing/EnvelopeCard.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
   import DocumentViewer from "@/components/viewer/DocumentViewer.vue";
   import type {
@@ -37,6 +37,7 @@
     ProcessingJob,
     RouteDecision,
     ShareRole,
+    SignatureEnvelope,
   } from "@/types/api";
   import { formatBytes, formatDateTime, fileTypeFromMime, initialsOf } from "@/utils/format";
 
@@ -68,8 +69,8 @@
   const versionBusy = ref(false);
   const routeBusy = ref(false);
   const shareOpen = ref(false);
-  const signOpen = ref(false);
-  const signBusy = ref(false);
+  const signatures = signaturesService();
+  const envelopes = ref<SignatureEnvelope[]>([]);
   const noAccess = ref(false);
   const requestRole = ref<ShareRole>("viewer");
   const requestMessage = ref("");
@@ -153,6 +154,7 @@
       contributors.value = loadedContributors;
       documentRoutes.value = loadedRoutes;
       processingJob.value = await service.fetchProcessingJob(docId.value);
+      envelopes.value = await signatures.forDocument(docId.value);
     }
     loading.value = false;
     if (!doc.value) error.value = service.error.value;
@@ -274,20 +276,6 @@
   const openShareDialog = () => {
     shareOpen.value = true;
   };
-  const requestSignature = async (input: {
-    title: string;
-    recipients: Array<{ email: string; name: string; role: string }>;
-  }) => {
-    signBusy.value = true;
-    const request = await service.requestSignature(docId.value, input);
-    signBusy.value = false;
-    if (!request) {
-      toast.error(service.error.value || "Could not create signature request");
-      return;
-    }
-    signOpen.value = false;
-    toast.success("Signature request sent");
-  };
 </script>
 
 <template>
@@ -392,14 +380,10 @@
         >
           <Share2Icon class="h-3.5 w-3.5" /> {{ can("share") ? "Share" : "Who has access" }}
         </Button>
-        <Button
-          v-if="can('sign')"
-          size="sm"
-          variant="outline"
-          class="gap-1.5"
-          @click="signOpen = true"
-        >
-          <PenLineIcon class="h-3.5 w-3.5" /> Sign
+        <Button v-if="can('sign')" size="sm" variant="outline" class="gap-1.5" as-child>
+          <NuxtLink :to="`/documents/${doc.id}/sign`">
+            <PenLineIcon class="h-3.5 w-3.5" /> Request signatures
+          </NuxtLink>
         </Button>
         <Button
           v-if="can('edit')"
@@ -562,6 +546,22 @@
       </div>
 
       <div class="space-y-4">
+        <section
+          v-if="envelopes.length"
+          id="signatures"
+          class="border-border bg-card space-y-3 rounded-xl border p-4"
+          aria-label="Signatures"
+        >
+          <p class="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+            Signatures
+          </p>
+          <EnvelopeCard
+            v-for="envelope in envelopes"
+            :key="envelope.id"
+            :envelope="envelope"
+            @changed="load"
+          />
+        </section>
         <div class="border-border bg-card rounded-xl border p-4">
           <p class="text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase">
             Owner
@@ -664,13 +664,5 @@
     :document-id="doc.id"
     :title="doc.name"
     @changed="load"
-  />
-  <DocumentSignDialog
-    v-if="doc"
-    v-model:open="signOpen"
-    :document-title="doc.name"
-    :busy="signBusy"
-    :error="service.error.value"
-    @submit="requestSignature"
   />
 </template>

@@ -9,7 +9,13 @@ export default defineNuxtRouteMiddleware(async (to) => {
 
   if (to.path.startsWith("/visit")) return;
   // Invitation and share links work whether or not the person is signed in.
-  if (to.path === "/auth/invite" || to.path.startsWith("/s/") || to.path.startsWith("/r/")) return;
+  if (
+    to.path === "/auth/invite" ||
+    to.path.startsWith("/s/") ||
+    to.path.startsWith("/r/") ||
+    to.path.startsWith("/sign/")
+  )
+    return;
 
   if (guestOnlyPages.has(to.path)) {
     if (getToken()) return navigateTo("/");

@@ -18,6 +18,7 @@
     Building2Icon,
     ShieldCheckIcon,
     HistoryIcon,
+    SignatureIcon,
   } from "@lucide/vue";
   import { onMounted, shallowRef } from "vue";
   import { useRoute } from "vue-router";
@@ -65,6 +66,7 @@
     { title: "Shared with me", url: "/shared", icon: Share2Icon },
     { title: "Favorites", url: "/favorites", icon: StarIcon },
     { title: "Recent", url: "/recent", icon: ClockIcon },
+    { title: "Signatures", url: "/signatures", icon: SignatureIcon },
   ]);
 
   const admin = ref<NavItem[]>([
