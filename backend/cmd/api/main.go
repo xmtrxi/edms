@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/valkey-io/valkey-go"
 
@@ -134,6 +135,20 @@ func main() {
 
 	backgroundDocs := service.NewDocumentService(cfg, db.Client(), provider, queueClient, searchClient, logger)
 	service.UseAutomation(service.NewAutomationService(cfg, db.Client(), backgroundDocs, service.NewOperationsService(db.Client(), cfg.SMTP, queueClient), logger))
+	claim := func(ctx context.Context, ttl time.Duration) bool {
+		if valkeyClient == nil {
+			return true
+		}
+		// One instance runs each pass; the lock expires before the next.
+		err := valkeyClient.Do(ctx, valkeyClient.B().Set().Key("edms:maintenance").Value("1").Nx().Ex(ttl).Build()).Error()
+		return err == nil
+	}
+	maintenance := service.NewMaintenance(
+		service.NewUploadService(cfg.Uploads, db.Client(), backgroundDocs),
+		service.NewRetentionService(cfg, db.Client(), provider, logger),
+		claim, logger,
+	)
+	go maintenance.Start(ctx, time.Hour)
 
 	server := api.New(cfg, handler.Deps{
 		Cfg:     cfg,

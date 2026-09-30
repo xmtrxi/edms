@@ -84,6 +84,7 @@ func (s *Server) registerRoutes(deps handler.Deps) {
 	handler.NewCommentsHandler(deps).RegisterRoutes(api)
 	handler.NewEditorHandler(deps).RegisterRoutes(api)
 	handler.NewAutomationHandler(deps).RegisterRoutes(api)
+	handler.NewRetentionHandler(deps).RegisterRoutes(api)
 	handler.NewCategoriesHandler(deps).RegisterRoutes(api)
 	handler.NewDepartmentsHandler(deps).RegisterRoutes(api)
 	handler.NewAdministrationHandler(deps).RegisterRoutes(api)

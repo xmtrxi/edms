@@ -955,3 +955,25 @@ export interface AutomationRun {
   detail?: string;
   created_at: string;
 }
+
+export type RetentionAction = "archive" | "trash" | "purge";
+
+export interface RetentionPolicy {
+  id: string;
+  name: string;
+  enabled: boolean;
+  folder_id?: string;
+  sensitivity?: Sensitivity;
+  age_basis: "created" | "modified";
+  keep_days: number;
+  action: RetentionAction;
+  last_run_at?: string;
+  last_count: number;
+  created_at: string;
+}
+
+export interface RetentionPreview {
+  count: number;
+  held: number;
+  sample: Document[];
+}

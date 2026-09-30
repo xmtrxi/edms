@@ -36,5 +36,6 @@ func Migrations() []surrealgoorm.Migration {
 		addNativeSigning{},
 		addCollaboration{},
 		addAutomation{},
+		addRetention{},
 	}
 }
