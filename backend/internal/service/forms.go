@@ -145,7 +145,44 @@ func (s *FormsService) createSubmission(ctx context.Context, actor, templateID, 
 		}
 	}
 	_ = writeAudit(ctx, s.db, actor, "form.submitted", "form_submission", string(submission.ID), map[string]any{"template_id": templateID})
+	s.notifyActiveStep(ctx, string(submission.ID), template.Name)
 	return submission, nil
+}
+
+// notifyActiveStep tells the approvers of a submission's current step.
+func (s *FormsService) notifyActiveStep(ctx context.Context, submissionID, formName string) {
+	steps, err := queryRows[database.FormApprovalStep](ctx, s.db, "SELECT * FROM form_approval_steps WHERE submission_id = $submission AND status = 'active' LIMIT 1", map[string]any{"submission": submissionID})
+	if err != nil || len(steps) == 0 {
+		return
+	}
+	assignees, err := queryRows[database.FormApprovalAssignee](ctx, s.db, "SELECT * FROM form_approval_assignees WHERE step_id = $step AND status = 'pending'", map[string]any{"step": string(steps[0].ID)})
+	if err != nil {
+		return
+	}
+	ids := make([]string, 0, len(assignees))
+	for _, a := range assignees {
+		ids = append(ids, a.UserID)
+	}
+	notify(ctx, ids, Notice{
+		Kind: database.NotificationFormApproval, Title: "A " + formName + " submission needs your approval",
+		Body: steps[0].Name, Link: "/forms", Resource: "form_submission", ResourceID: submissionID, Email: true,
+	})
+}
+
+// notifyOutcome tells the person who submitted the form what was decided.
+func (s *FormsService) notifyOutcome(ctx context.Context, submissionID, status, comment string) {
+	submission, err := surrealdb.Select[database.FormSubmission](ctx, s.db, mustRecordID(submissionID))
+	if err != nil || submission == nil {
+		return
+	}
+	name := "Your form"
+	if template, err := surrealdb.Select[database.FormTemplate](ctx, s.db, mustRecordID(submission.TemplateID)); err == nil && template != nil {
+		name = "Your " + template.Name + " submission"
+	}
+	notify(ctx, []string{submission.SubmittedBy}, Notice{
+		Kind: database.NotificationFormOutcome, Title: name + " was " + status, Body: strings.TrimSpace(comment),
+		Link: "/forms", Resource: "form_submission", ResourceID: submissionID, Email: true,
+	})
 }
 func (s *FormsService) Submission(ctx context.Context, actor, id string) (*FormSubmissionDetail, error) {
 	rid, err := database.ParseRecordID(id)
@@ -265,6 +302,9 @@ func (s *FormsService) Decide(ctx context.Context, actor, submissionID string, i
 			status = "returned"
 		}
 		_, e = surrealdb.Merge[database.FormSubmission](ctx, s.db, mustRecordID(submissionID), map[string]any{"status": status, "updated_at": now})
+		if e == nil {
+			s.notifyOutcome(ctx, submissionID, status, in.Comment)
+		}
 		return e
 	}
 	complete := step.CompletionRule == "any_one"
@@ -285,9 +325,21 @@ func (s *FormsService) Decide(ctx context.Context, actor, submissionID string, i
 	}
 	if next == nil || len(*next) == 0 || len((*next)[0].Result) == 0 {
 		_, e = surrealdb.Merge[database.FormSubmission](ctx, s.db, mustRecordID(submissionID), map[string]any{"status": "approved", "updated_at": now})
+		if e == nil {
+			s.notifyOutcome(ctx, submissionID, "approved", in.Comment)
+		}
 		return e
 	}
 	_, e = surrealdb.Merge[database.FormApprovalStep](ctx, s.db, mustRecordID(string((*next)[0].Result[0].ID)), map[string]any{"status": "active"})
+	if e == nil {
+		formName := "form"
+		if submission, err := surrealdb.Select[database.FormSubmission](ctx, s.db, mustRecordID(submissionID)); err == nil && submission != nil {
+			if template, err := surrealdb.Select[database.FormTemplate](ctx, s.db, mustRecordID(submission.TemplateID)); err == nil && template != nil {
+				formName = template.Name
+			}
+		}
+		s.notifyActiveStep(ctx, submissionID, formName)
+	}
 	return e
 }
 func (s *FormsService) createSteps(ctx context.Context, sid string, definition map[string]any) error {

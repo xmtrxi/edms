@@ -218,12 +218,8 @@ func (h *SharingHandler) linkViewer(c *echo.Context) *database.User {
 	if !strings.HasPrefix(header, "Bearer ") {
 		return nil
 	}
-	claims, err := h.auth.ParseToken(strings.TrimPrefix(header, "Bearer "))
+	_, user, err := h.auth.Authenticate(c.Request().Context(), strings.TrimPrefix(header, "Bearer "))
 	if err != nil {
-		return nil
-	}
-	user, err := h.auth.UserByID(c.Request().Context(), claims.UserID)
-	if err != nil || user == nil || user.Status != database.UserStatusActive {
 		return nil
 	}
 	return user

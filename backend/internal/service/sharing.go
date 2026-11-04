@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/smtp"
 	"slices"
 	"strings"
 	"time"
@@ -399,9 +398,7 @@ func (s *SharingService) ShareWithPerson(ctx context.Context, userID, documentID
 				return nil, err
 			}
 			_ = writeAudit(ctx, s.db, userID, "document.shared", "document", documentID, map[string]any{"recipient": email, "role": role})
-			if in.Notify {
-				s.notify(ctx, email, doc, userID, in.Message, s.documentURL(doc))
-			}
+			s.notifyShare(ctx, string(recipient.ID), doc, userID, in.Message, in.Notify)
 			return &ShareResult{Kind: "grant", Grant: grant}, nil
 		}
 	}
@@ -451,7 +448,9 @@ func (s *SharingService) ShareWithPerson(ctx context.Context, userID, documentID
 		link = s.linkURL(token)
 		openURL = link
 	}
-	if in.Notify {
+	if recipientID != "" {
+		s.notifyShare(ctx, recipientID, doc, userID, in.Message, in.Notify)
+	} else if in.Notify {
 		s.notify(ctx, email, doc, userID, in.Message, openURL)
 	}
 	view := ShareView{ID: string(share.ID), Kind: kind, UserID: recipientID, Email: email, Role: role, ExpiresAt: expiresAt, CreatedAt: now, AllowDownload: true}
@@ -725,6 +724,14 @@ func (s *SharingService) RequestAccess(ctx context.Context, userID, documentID, 
 	})
 	if err == nil {
 		_ = writeAudit(ctx, s.db, userID, "document.access_requested", "document", documentID, map[string]any{"role": role})
+		requester := "Someone"
+		if user, err := s.orgs.userByID(ctx, userID); err == nil && user != nil {
+			requester = firstNonEmpty(user.Name, user.Email)
+		}
+		notify(ctx, []string{doc.OwnerID}, Notice{
+			Kind: database.NotificationAccessRequest, Title: requester + " asked for " + role + " access to " + doc.Name,
+			Body: strings.TrimSpace(message), Link: "/shared", Resource: "document", ResourceID: documentID, Email: true,
+		})
 	}
 	return request, err
 }
@@ -787,8 +794,27 @@ func (s *SharingService) DecideAccessRequest(ctx context.Context, userID, reques
 	updated, err := surrealdb.Merge[database.AccessRequest](ctx, s.db, rid, map[string]any{"status": status, "decided_by": userID, "updated_at": time.Now().UTC()})
 	if err == nil {
 		_ = writeAudit(ctx, s.db, userID, "document.access_request_"+status, "document", request.DocumentID, map[string]any{"requester": request.RequesterID})
+		notice := Notice{Kind: database.NotificationAccessDecision, Title: "Your request for " + doc.Name + " was declined", Resource: "document", ResourceID: request.DocumentID, Email: true}
+		if approve {
+			notice.Title, notice.Link = "You now have access to "+doc.Name, "/documents/"+request.DocumentID
+		}
+		notify(ctx, []string{request.RequesterID}, notice)
 	}
 	return updated, err
+}
+
+// notifyShare tells a colleague a document was shared with them. The email
+// copy is sent only when the sharer asked to notify them.
+func (s *SharingService) notifyShare(ctx context.Context, recipientID string, doc *database.Document, senderID, message string, email bool) {
+	sender := "Someone"
+	if user, err := s.orgs.userByID(ctx, senderID); err == nil && user != nil {
+		sender = firstNonEmpty(user.Name, user.Email)
+	}
+	notify(ctx, []string{recipientID}, Notice{
+		Kind: database.NotificationShare, Title: sender + " shared " + doc.Name + " with you",
+		Body: strings.TrimSpace(message), Link: "/documents/" + string(doc.ID),
+		Resource: "document", ResourceID: string(doc.ID), Email: email,
+	})
 }
 
 func (s *SharingService) documentURL(doc *database.Document) string {
@@ -807,13 +833,13 @@ func (s *SharingService) notify(ctx context.Context, email string, doc *database
 	if user, err := s.orgs.userByID(ctx, senderID); err == nil && user != nil {
 		sender = firstNonEmpty(user.Name, user.Email)
 	}
-	body := fmt.Sprintf("To: %s\r\nSubject: %s shared \"%s\" with you\r\n\r\n%s shared \"%s\" with you.\r\n", email, sender, doc.Name, sender, doc.Name)
+	body := fmt.Sprintf("%s shared \"%s\" with you.\n", sender, doc.Name)
 	if strings.TrimSpace(message) != "" {
-		body += "\r\n" + strings.TrimSpace(message) + "\r\n"
+		body += "\n" + strings.TrimSpace(message) + "\n"
 	}
-	body += "\r\nOpen it: " + url + "\r\n"
-	auth := smtp.PlainAuth("", s.smtp.Username, s.smtp.Password, s.smtp.Host)
-	if err := smtp.SendMail(s.smtp.Host+":"+s.smtp.Port, auth, s.smtp.From, []string{email}, []byte(body)); err != nil {
+	body += "\nOpen it: " + url + "\n"
+	// Through the delivery log, so it is retried and its delivery tracked.
+	if _, err := NewOperationsService(s.db, s.smtp).QueueEmail(ctx, senderID, email, fmt.Sprintf("%s shared \"%s\" with you", sender, doc.Name), body); err != nil {
 		s.log.Warn("send share notification", "email", email, "error", err)
 	}
 }

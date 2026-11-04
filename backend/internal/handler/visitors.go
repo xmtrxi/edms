@@ -207,6 +207,9 @@ func (h *VisitorsHandler) downloadAttachment(c *echo.Context) error {
 }
 
 func (h *VisitorsHandler) visitorError(c *echo.Context, err error) error {
+	if response, ok := scanRefusal(c, err); ok {
+		return response
+	}
 	if errors.Is(err, service.ErrVisitorAccess) {
 		return respondError(c, http.StatusUnauthorized, service.ErrVisitorAccess.Error())
 	}

@@ -176,15 +176,32 @@ func (h *DocumentsHandler) list(c *echo.Context) error {
 		documentIDs = ids
 	}
 
+	// updated_within=30d limits the list to recent changes; sort=recent puts
+	// the latest first.
+	var since time.Time
+	if within := strings.TrimSpace(c.QueryParam("updated_within")); within != "" {
+		days, err := strconv.Atoi(strings.TrimSuffix(within, "d"))
+		if err != nil || days <= 0 || days > 3650 {
+			return respondError(c, http.StatusBadRequest, "updated_within must be a number of days, like 30d")
+		}
+		since = time.Now().AddDate(0, 0, -days)
+	}
+	sort := ""
+	if c.QueryParam("sort") == service.SortRecent {
+		sort = service.SortRecent
+	}
+
 	result, err := h.search.Search(c.Request().Context(), service.SearchInput{
-		Query:       c.QueryParam("q"),
-		OwnerID:     string(user.ID),
-		Status:      c.QueryParam("status"),
-		FolderPath:  strings.TrimSpace(c.QueryParam("folder_path")),
-		FolderID:    strings.TrimSpace(c.QueryParam("folder_id")),
-		DocumentIDs: documentIDs,
-		Page:        page,
-		PageSize:    pageSize,
+		Query:        c.QueryParam("q"),
+		OwnerID:      string(user.ID),
+		Status:       c.QueryParam("status"),
+		FolderPath:   strings.TrimSpace(c.QueryParam("folder_path")),
+		FolderID:     strings.TrimSpace(c.QueryParam("folder_id")),
+		DocumentIDs:  documentIDs,
+		UpdatedSince: since,
+		Sort:         sort,
+		Page:         page,
+		PageSize:     pageSize,
 	})
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "failed to list documents")
@@ -317,6 +334,9 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidGrant) {
 			return respondError(c, http.StatusBadRequest, err.Error())
+		}
+		if response, ok := scanRefusal(c, err); ok {
+			return response
 		}
 		return respondError(c, http.StatusInternalServerError, "failed to upload document")
 	}
@@ -760,6 +780,9 @@ func (h *DocumentsHandler) cancelUpload(c *echo.Context) error {
 }
 
 func uploadError(c *echo.Context, err error) error {
+	if response, ok := scanRefusal(c, err); ok {
+		return response
+	}
 	switch {
 	case errors.Is(err, service.ErrUploadNotFound):
 		return respondError(c, http.StatusNotFound, err.Error())

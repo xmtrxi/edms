@@ -15,6 +15,18 @@ type Maintenance struct {
 	// of several API instances runs each pass.
 	claim func(ctx context.Context, ttl time.Duration) bool
 	log   *slog.Logger
+	tasks []maintenanceTask
+}
+
+type maintenanceTask struct {
+	name string
+	run  func(context.Context) error
+}
+
+// Add registers another housekeeping step to run on every pass.
+func (m *Maintenance) Add(name string, run func(context.Context) error) *Maintenance {
+	m.tasks = append(m.tasks, maintenanceTask{name: name, run: run})
+	return m
 }
 
 func NewMaintenance(uploads *UploadService, retention *RetentionService, claim func(context.Context, time.Duration) bool, logger *slog.Logger) *Maintenance {
@@ -38,6 +50,11 @@ func (m *Maintenance) RunOnce(ctx context.Context) {
 		m.log.Warn("apply retention", "error", err)
 	} else if applied > 0 {
 		m.log.Info("applied retention", "documents", applied)
+	}
+	for _, task := range m.tasks {
+		if err := task.run(ctx); err != nil {
+			m.log.Warn("maintenance task failed", "task", task.name, "error", err)
+		}
 	}
 }
 

@@ -28,6 +28,8 @@ type MCPHandler struct {
 	folders *service.FolderService
 	search  *service.SearchService
 	ai      *service.AIService
+	product string
+	version string
 }
 
 func NewMCPHandler(deps Deps) *MCPHandler {
@@ -39,6 +41,8 @@ func NewMCPHandler(deps Deps) *MCPHandler {
 		folders: service.NewFolderService(db),
 		search:  search,
 		ai:      service.NewAIService(db, deps.Cfg.AI).WithSearch(search),
+		product: deps.Cfg.App.Name,
+		version: deps.Cfg.App.Version,
 	}
 }
 
@@ -99,7 +103,7 @@ func (h *MCPHandler) dispatch(c *echo.Context, req rpcRequest) (any, *rpcError) 
 		return map[string]any{
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo":      map[string]any{"name": "edms", "title": "Lumen DMS", "version": "1.0.0"},
+			"serverInfo":      map[string]any{"name": "edms", "title": h.product, "version": h.version},
 			"instructions": "Search, read and answer questions from the documents this account can open. " +
 				"Cite document names when you use their content. Sharing and deleting are not available to agents.",
 		}, nil

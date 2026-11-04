@@ -12,6 +12,7 @@ type Tasks struct {
 	ocr    *service.OCRService
 	search *service.SearchService
 	email  *service.OperationsService
+	pdf    *service.PDFService
 	cfg    config.Config
 	log    *slog.Logger
 }

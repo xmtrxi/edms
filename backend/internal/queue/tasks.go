@@ -4,6 +4,7 @@ const (
 	TaskOCR     = "document:ocr"
 	TaskReindex = "search:reindex"
 	TaskEmail   = "email:deliver"
+	TaskPDF     = "pdf:run"
 )
 
 type OCRPayload struct {
@@ -19,4 +20,8 @@ type ReindexPayload struct{}
 
 type EmailPayload struct {
 	DeliveryID string `json:"delivery_id"`
+}
+
+type PDFPayload struct {
+	JobID string `json:"job_id"`
 }

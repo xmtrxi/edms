@@ -97,6 +97,7 @@ func (s *RoutingService) Create(ctx context.Context, ownerID, documentID string,
 	_ = writeAudit(ctx, s.DB, ownerID, "route.started", "document", documentID, map[string]any{
 		"workflow_id": string(workflow.ID), "document_version_id": doc.CurrentVersionID, "summary": workflow.Title,
 	})
+	s.notifyStep(ctx, doc, workflow, &steps[0])
 	response := dto.NewWorkflowResponse(workflow, steps)
 	return &response, nil
 }
@@ -246,8 +247,33 @@ func (s *RoutingService) Decide(ctx context.Context, ownerID, documentID, workfl
 		"workflow_id": workflowID, "step_id": string(current.ID), "document_version_id": doc.CurrentVersionID, "summary": comment,
 	})
 	steps, _ = s.steps(ctx, workflowID)
+	switch workflow.Status {
+	case database.WorkflowStatusActive, database.WorkflowStatusWaitingForChanges:
+		if workflow.CurrentStep >= 0 && workflow.CurrentStep < len(steps) {
+			s.notifyStep(ctx, doc, workflow, &steps[workflow.CurrentStep])
+		}
+	case database.WorkflowStatusCompleted, database.WorkflowStatusRejected:
+		notify(ctx, []string{workflow.CreatedBy}, Notice{
+			Kind: database.NotificationRouteOutcome, Title: "\"" + workflow.Title + "\" was " + workflow.Status,
+			Body: comment, Link: "/documents/" + documentID, Resource: "document", ResourceID: documentID, Email: true,
+		})
+	}
 	response := dto.NewWorkflowResponse(workflow, steps)
 	return &response, nil
+}
+
+// notifyStep tells whoever must act on the route's current step.
+func (s *RoutingService) notifyStep(ctx context.Context, doc *database.Document, workflow *database.WorkflowRequest, step *database.WorkflowStep) {
+	recipients := []string{step.AssignedUserID}
+	recipients = append(recipients, departmentMemberIDs(ctx, s.DB, step.AssignedDepartmentID)...)
+	title := "\"" + workflow.Title + "\" is waiting for you"
+	if workflow.Status == database.WorkflowStatusWaitingForChanges {
+		title = "\"" + workflow.Title + "\" was returned to you for changes"
+	}
+	notify(ctx, recipients, Notice{
+		Kind: database.NotificationRouteStep, Title: title, Body: firstNonEmpty(step.Name, doc.Name),
+		Link: "/documents/" + string(doc.ID), Resource: "document", ResourceID: string(doc.ID), Email: true,
+	})
 }
 
 func (s *RoutingService) get(ctx context.Context, documentID, workflowID string) (*database.WorkflowRequest, error) {

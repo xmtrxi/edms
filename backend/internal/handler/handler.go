@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -14,7 +15,9 @@ import (
 	"github.com/xmtrxi/edms/internal/gotenberg"
 	"github.com/xmtrxi/edms/internal/queue"
 	"github.com/xmtrxi/edms/internal/realtime"
+	"github.com/xmtrxi/edms/internal/scan"
 	"github.com/xmtrxi/edms/internal/search"
+	"github.com/xmtrxi/edms/internal/service"
 	"github.com/xmtrxi/edms/internal/storage"
 )
 
@@ -30,6 +33,8 @@ type Deps struct {
 	Office *gotenberg.Client
 	// Realtime pushes live events to browsers; nil disables live updates.
 	Realtime *realtime.Hub
+	// Scanner checks uploads for malware; nil when scanning is off.
+	Scanner scan.Scanner
 }
 
 func (d Deps) Client() *surrealdb.DB {
@@ -45,6 +50,18 @@ func respondJSON[T any](c *echo.Context, code int, data T) error {
 
 func respondError(c *echo.Context, code int, message string) error {
 	return c.JSON(code, map[string]string{"error": message})
+}
+
+// scanRefusal answers an upload the malware scanner refused. It reports false
+// for any other error.
+func scanRefusal(c *echo.Context, err error) (error, bool) {
+	switch {
+	case errors.Is(err, service.ErrMalwareDetected):
+		return respondError(c, http.StatusUnprocessableEntity, err.Error()), true
+	case errors.Is(err, service.ErrScanUnavailable):
+		return respondError(c, http.StatusServiceUnavailable, err.Error()), true
+	}
+	return nil, false
 }
 
 func bind(c *echo.Context, dst any) error {

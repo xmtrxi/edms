@@ -18,10 +18,9 @@ type CommentsHandler struct {
 
 func NewCommentsHandler(deps Deps) *CommentsHandler {
 	docs := service.NewDocumentService(deps.Cfg, deps.Client(), deps.Storage, deps.Queue, deps.Search, deps.Logger)
-	email := service.NewOperationsService(deps.Client(), deps.Cfg.SMTP, deps.Queue)
 	return &CommentsHandler{
 		auth:     service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger),
-		comments: service.NewCommentService(deps.Client(), docs, email, deps.Cfg.SMTP.AppURL),
+		comments: service.NewCommentService(deps.Client(), docs),
 	}
 }
 

@@ -21,14 +21,12 @@ const maxCommentLength = 5000
 // access, writing needs comment access; everyone with the document open sees
 // changes live.
 type CommentService struct {
-	db     *surrealdb.DB
-	docs   *DocumentService
-	email  *OperationsService
-	appURL string
+	db   *surrealdb.DB
+	docs *DocumentService
 }
 
-func NewCommentService(db *surrealdb.DB, docs *DocumentService, email *OperationsService, appURL string) *CommentService {
-	return &CommentService{db: db, docs: docs, email: email, appURL: strings.TrimRight(appURL, "/")}
+func NewCommentService(db *surrealdb.DB, docs *DocumentService) *CommentService {
+	return &CommentService{db: db, docs: docs}
 }
 
 type CommentInput struct {
@@ -245,19 +243,14 @@ func (s *CommentService) validMentions(ctx context.Context, doc *database.Docume
 }
 
 func (s *CommentService) notify(ctx context.Context, doc *database.Document, comment *CommentView, mentions []string) {
-	link := s.appURL + "/documents/" + string(doc.ID) + "#comments"
 	for _, id := range mentions {
 		publishUser(ctx, id, "mention", map[string]any{"document_id": string(doc.ID), "document_name": doc.Name, "comment": comment})
-		if s.email == nil {
-			continue
-		}
-		person := newPeople(s.db).get(ctx, id)
-		if person.Email == "" {
-			continue
-		}
-		body := fmt.Sprintf("%s mentioned you on %q:\n\n%s\n\nReply: %s\n", comment.Author.Name, doc.Name, comment.Body, link)
-		_, _ = s.email.QueueEmail(ctx, comment.Author.ID, person.Email, comment.Author.Name+" mentioned you on "+doc.Name, body)
 	}
+	notify(ctx, mentions, Notice{
+		Kind: database.NotificationMention, Title: comment.Author.Name + " mentioned you on " + doc.Name,
+		Body: comment.Body, Link: "/documents/" + string(doc.ID) + "#comments",
+		Resource: "document", ResourceID: string(doc.ID), Email: true,
+	})
 }
 
 func (s *CommentService) view(ctx context.Context, people *peopleCache, c *database.Comment, viewerID string, canModerate bool) CommentView {

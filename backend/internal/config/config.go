@@ -12,6 +12,10 @@ import (
 type AppConfig struct {
 	Env  string
 	Port string
+	// Name is the product name shown in the interface, page titles and email.
+	Name string
+	// Version is set by the binary at startup.
+	Version string
 }
 
 // DeploymentConfig decides how organizations are provisioned. A self-hosted
@@ -23,6 +27,9 @@ type DeploymentConfig struct {
 	AdminEmail         string
 	PersonalWorkspaces bool
 	MultiOrg           bool
+	// RequireVerifiedEmail refuses sign-in until a new account confirms its
+	// address. It only applies when SMTP is configured.
+	RequireVerifiedEmail bool
 }
 
 // UploadConfig controls resumable uploads. Chunks are staged in Dir, which
@@ -106,8 +113,102 @@ type OCRConfig struct {
 }
 type JWTConfig struct {
 	Secret string
+	// SessionTTL is how long a sign-in lasts before the person signs in again.
+	SessionTTL time.Duration
+	// EncryptionKey protects secrets stored in the database, such as
+	// two-step sign-in keys. It defaults to Secret; changing it later makes
+	// existing two-step sign-in setups unreadable.
+	EncryptionKey string
 }
-type SMTPConfig struct{ Host, Port, Username, Password, From, AppURL string }
+
+// SSOConfig signs people in through an OpenID Connect provider such as
+// Microsoft Entra ID, Google Workspace, Okta or Keycloak.
+type SSOConfig struct {
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	// RedirectURL is this API's callback as registered with the provider,
+	// e.g. https://edms.example.com/api/auth/sso/callback.
+	RedirectURL string
+	Scopes      []string
+	Label       string
+	// EmailClaim names the claim holding the address; Entra ID sometimes
+	// only sends preferred_username.
+	EmailClaim string
+	// AllowedDomains limits sign-in to these email domains when set.
+	AllowedDomains []string
+	// AutoProvision creates accounts for new people on first sign-in.
+	AutoProvision bool
+	// Enforce turns off password sign-in for everyone.
+	Enforce bool
+}
+
+// Enabled reports whether single sign-on is configured.
+func (c SSOConfig) Enabled() bool {
+	return c.Issuer != "" && c.ClientID != "" && c.RedirectURL != ""
+}
+
+// PDFToolsConfig connects a Stirling-PDF server for merge, compress and
+// similar tools.
+type PDFToolsConfig struct {
+	URL     string
+	APIKey  string
+	Timeout time.Duration
+}
+
+// ScanConfig checks uploads for malware with a ClamAV daemon.
+type ScanConfig struct {
+	// ClamAVAddress is clamd's TCP address, e.g. clamav:3310. Empty turns
+	// scanning off.
+	ClamAVAddress string
+	// Required refuses uploads while the scanner is unreachable instead of
+	// storing them unscanned.
+	Required bool
+	Timeout  time.Duration
+}
+
+// SecurityConfig hardens the HTTP server.
+type SecurityConfig struct {
+	// CORSOrigins are the browser origins allowed to call the API.
+	CORSOrigins []string
+	// BodyLimit caps request bodies, except uploads and WebDAV writes, which
+	// are limited by Uploads.MaxBytes.
+	BodyLimit int64
+	// MonitoringUser and MonitoringPassword protect the task dashboard with
+	// HTTP basic auth. The dashboard is off unless both are set.
+	MonitoringUser     string
+	MonitoringPassword string
+	// LoginAttempts is how many failed sign-ins an address or IP may make
+	// within LoginWindow before further attempts are refused.
+	LoginAttempts int
+	LoginWindow   time.Duration
+	// TrustProxy reads the client IP from X-Forwarded-For, for deployments
+	// behind a reverse proxy.
+	TrustProxy bool
+}
+type SMTPConfig struct{ Host, Port, Username, Password, From, AppURL, AppName string }
+
+// Product is the name mail uses for the application.
+func (c SMTPConfig) Product() string {
+	if c.AppName != "" {
+		return c.AppName
+	}
+	return defaultAppName
+}
+
+// EmailEventsConfig verifies delivery callbacks from the mail provider.
+// Provider is mailgun, postmark, sendgrid or generic; it also decides which
+// tracking headers outgoing mail carries.
+type EmailEventsConfig struct {
+	Provider string
+	// Secret is the Mailgun webhook signing key, the generic HMAC secret,
+	// or the Postmark basic-auth password.
+	Secret string
+	// User is the Postmark basic-auth user name.
+	User string
+	// PublicKey is SendGrid's base64 ECDSA verification key.
+	PublicKey string
+}
 type SearchConfig struct {
 	URL    string
 	APIKey string
@@ -141,6 +242,17 @@ type Config struct {
 	Search          SearchConfig
 	AI              AIConfig
 	Editor          EditorConfig
+	Security        SecurityConfig
+	SSO             SSOConfig
+	Scan            ScanConfig
+	PDFTools        PDFToolsConfig
+	EmailEvents     EmailEventsConfig
+}
+
+const defaultAppName = "Lumen DMS"
+
+func appName() string {
+	return strings.TrimSpace(getEnvDefault("APP_NAME", defaultAppName))
 }
 
 func Load(env string) Config {
@@ -149,6 +261,7 @@ func Load(env string) Config {
 		App: AppConfig{
 			Env:  getEnvDefault("APP_ENV", "development"),
 			Port: getEnvDefault("APP_PORT", "8080"),
+			Name: appName(),
 		},
 		Deployment: loadDeployment(),
 		Editor: EditorConfig{
@@ -196,7 +309,7 @@ func Load(env string) Config {
 			DocumensoWebhookSecret: getEnv("DOCUMENSO_WEBHOOK_SECRET"),
 			SealCertFile:           getEnv("ESIGN_SEAL_CERT_FILE"),
 			SealKeyFile:            getEnv("ESIGN_SEAL_KEY_FILE"),
-			SealName:               getEnvDefault("ESIGN_SEAL_NAME", "Lumen DMS"),
+			SealName:               getEnvDefault("ESIGN_SEAL_NAME", appName()),
 			TSAURL:                 getEnv("ESIGN_TSA_URL"),
 		},
 		Cache: CacheConfig{
@@ -216,9 +329,48 @@ func Load(env string) Config {
 			Gotenberg: getEnv("GOTENBERG_BASE_URL"),
 		},
 		JWT: JWTConfig{
-			Secret: getEnv("JWT_SECRET"),
+			Secret:        getEnv("JWT_SECRET"),
+			SessionTTL:    getEnvDuration("SESSION_TTL", 72*time.Hour),
+			EncryptionKey: getEnv("ENCRYPTION_KEY"),
 		},
-		SMTP: SMTPConfig{Host: getEnv("SMTP_HOST"), Port: getEnvDefault("SMTP_PORT", "587"), Username: getEnv("SMTP_USERNAME"), Password: getEnv("SMTP_PASSWORD"), From: getEnv("SMTP_FROM"), AppURL: getEnvDefault("APP_URL", "http://localhost:3000")},
+		SSO: SSOConfig{
+			Issuer:         strings.TrimRight(getEnv("OIDC_ISSUER"), "/"),
+			ClientID:       getEnv("OIDC_CLIENT_ID"),
+			ClientSecret:   getEnv("OIDC_CLIENT_SECRET"),
+			RedirectURL:    getEnv("OIDC_REDIRECT_URL"),
+			Scopes:         splitList(getEnvDefault("OIDC_SCOPES", "openid,email,profile")),
+			Label:          getEnvDefault("OIDC_LABEL", "Single sign-on"),
+			EmailClaim:     getEnvDefault("OIDC_EMAIL_CLAIM", "email"),
+			AllowedDomains: splitList(strings.ToLower(getEnv("OIDC_ALLOWED_DOMAINS"))),
+			AutoProvision:  getEnvBool("OIDC_AUTO_PROVISION", true),
+			Enforce:        getEnvBool("OIDC_ENFORCE", false),
+		},
+		EmailEvents: EmailEventsConfig{
+			Provider:  strings.ToLower(getEnv("EMAIL_EVENTS_PROVIDER")),
+			Secret:    getEnv("EMAIL_EVENTS_SECRET"),
+			User:      getEnv("EMAIL_EVENTS_USER"),
+			PublicKey: getEnv("EMAIL_EVENTS_PUBLIC_KEY"),
+		},
+		PDFTools: PDFToolsConfig{
+			URL:     strings.TrimRight(getEnv("STIRLING_PDF_URL"), "/"),
+			APIKey:  getEnv("STIRLING_PDF_API_KEY"),
+			Timeout: getEnvDuration("STIRLING_PDF_TIMEOUT", 5*time.Minute),
+		},
+		Scan: ScanConfig{
+			ClamAVAddress: getEnv("CLAMAV_ADDRESS"),
+			Required:      getEnvBool("CLAMAV_REQUIRED", false),
+			Timeout:       getEnvDuration("CLAMAV_TIMEOUT", 2*time.Minute),
+		},
+		Security: SecurityConfig{
+			CORSOrigins:        loadCORSOrigins(),
+			BodyLimit:          int64(getEnvInt("BODY_LIMIT_MB", 25)) * 1024 * 1024,
+			MonitoringUser:     getEnv("MONITORING_USER"),
+			MonitoringPassword: getEnv("MONITORING_PASSWORD"),
+			LoginAttempts:      getEnvInt("LOGIN_MAX_ATTEMPTS", 10),
+			LoginWindow:        getEnvDuration("LOGIN_WINDOW", 15*time.Minute),
+			TrustProxy:         getEnvBool("TRUST_PROXY", false),
+		},
+		SMTP: SMTPConfig{Host: getEnv("SMTP_HOST"), Port: getEnvDefault("SMTP_PORT", "587"), Username: getEnv("SMTP_USERNAME"), Password: getEnv("SMTP_PASSWORD"), From: getEnv("SMTP_FROM"), AppURL: getEnvDefault("APP_URL", "http://localhost:3000"), AppName: appName()},
 		Search: SearchConfig{
 			URL:    getEnv("MEILI_URL"),
 			APIKey: getEnv("MEILI_MASTER_KEY"),
@@ -243,6 +395,35 @@ const (
 	SignupInvite = "invite"
 )
 
+func splitList(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// loadCORSOrigins reads CORS_ORIGIN as a comma-separated list. Without it,
+// the frontend at APP_URL and the local dev servers are allowed.
+func loadCORSOrigins() []string {
+	var origins []string
+	for _, origin := range strings.Split(getEnv("CORS_ORIGIN"), ",") {
+		if origin = strings.TrimRight(strings.TrimSpace(origin), "/"); origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	if len(origins) > 0 {
+		return origins
+	}
+	origins = []string{"http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001"}
+	if appURL := strings.TrimRight(getEnv("APP_URL"), "/"); appURL != "" && appURL != origins[0] {
+		origins = append(origins, appURL)
+	}
+	return origins
+}
+
 func loadDeployment() DeploymentConfig {
 	mode := strings.ToLower(getEnvDefault("EDMS_MODE", ModeSelfHosted))
 	if mode != ModeSaaS {
@@ -263,6 +444,8 @@ func loadDeployment() DeploymentConfig {
 		AdminEmail:         getEnv("EDMS_ADMIN_EMAIL"),
 		PersonalWorkspaces: getEnvBool("EDMS_PERSONAL_WORKSPACES", personalDefault),
 		MultiOrg:           getEnvBool("EDMS_MULTI_ORG", mode == ModeSaaS),
+
+		RequireVerifiedEmail: getEnvBool("EDMS_REQUIRE_VERIFIED_EMAIL", mode == ModeSaaS),
 	}
 }
 

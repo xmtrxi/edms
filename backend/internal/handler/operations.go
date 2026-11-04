@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v5"
+	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/dto"
 	"github.com/xmtrxi/edms/internal/middleware"
 	"github.com/xmtrxi/edms/internal/service"
@@ -14,6 +17,7 @@ type OperationsHandler struct {
 	auth       *service.AuthService
 	authz      *service.AuthorizationService
 	operations *service.OperationsService
+	events     config.EmailEventsConfig
 }
 
 func NewOperationsHandler(deps Deps) *OperationsHandler {
@@ -21,9 +25,11 @@ func NewOperationsHandler(deps Deps) *OperationsHandler {
 	if err != nil {
 		panic(err)
 	}
-	return &OperationsHandler{auth: service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger), authz: authz, operations: service.NewOperationsService(deps.Client(), deps.Cfg.SMTP, deps.Queue)}
+	return &OperationsHandler{auth: service.NewAuthService(deps.Cfg, deps.Client(), deps.Logger), authz: authz, operations: service.NewOperationsService(deps.Client(), deps.Cfg.SMTP, deps.Queue), events: deps.Cfg.EmailEvents}
 }
 func (h *OperationsHandler) RegisterRoutes(api *echo.Group) {
+	// Mail providers call this; the signature, not a session, authenticates it.
+	api.POST("/email/events/:provider", h.emailEvents)
 	g := api.Group("/admin", middleware.RequireAuth(h.auth), middleware.RequirePermission(h.authz, "roles", "manage"))
 	g.GET("/audit-events", h.audit)
 	g.GET("/audit-events/export", h.auditExport)
@@ -102,4 +108,26 @@ func (h *OperationsHandler) emailStatus(c *echo.Context) error {
 		return respondError(c, 400, err.Error())
 	}
 	return respondJSON(c, 200, dto.OK(item))
+}
+
+// emailEvents records delivery, bounce and complaint callbacks.
+func (h *OperationsHandler) emailEvents(c *echo.Context) error {
+	body, err := io.ReadAll(io.LimitReader(c.Request().Body, 1<<20))
+	if err != nil {
+		return respondError(c, http.StatusBadRequest, "could not read callback")
+	}
+	events, err := service.ParseEmailEvents(h.events, c.Param("provider"), c.Request(), body, time.Now())
+	switch {
+	case errors.Is(err, service.ErrEmailEventsDisabled):
+		return respondError(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, service.ErrEmailEventsSignature):
+		return respondError(c, http.StatusUnauthorized, err.Error())
+	case err != nil:
+		return respondError(c, http.StatusBadRequest, err.Error())
+	}
+	matched, err := h.operations.ApplyEmailEvents(c.Request().Context(), events)
+	if err != nil {
+		return respondError(c, http.StatusInternalServerError, "failed to record callback")
+	}
+	return respondJSON(c, http.StatusOK, map[string]int{"received": len(events), "matched": matched})
 }

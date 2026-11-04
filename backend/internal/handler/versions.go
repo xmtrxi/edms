@@ -80,6 +80,9 @@ func (h *VersionsHandler) restore(c *echo.Context) error {
 	return respondJSON(c, http.StatusCreated, dto.Created(dto.NewDocumentVersionResponse(version)))
 }
 func (h *VersionsHandler) handleError(c *echo.Context, err error) error {
+	if response, ok := scanRefusal(c, err); ok {
+		return response
+	}
 	switch {
 	case errors.Is(err, service.ErrDocumentNotFound), errors.Is(err, service.ErrVersionNotFound):
 		return respondError(c, http.StatusNotFound, err.Error())

@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -87,6 +88,10 @@ func (s *LocalProvider) List(ctx context.Context, prefix string, cursor *string,
 	root := s.resolve(prefix)
 	var files []string
 	err := filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
+		// A prefix nothing was written under is an empty listing, as in S3.
+		if errors.Is(err, fs.ErrNotExist) && path == root {
+			return filepath.SkipDir
+		}
 		if err != nil {
 			return err
 		}

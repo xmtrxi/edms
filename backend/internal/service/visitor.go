@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -288,8 +289,23 @@ func (s *VisitorService) AddAttachment(ctx context.Context, token, name, mime st
 	if err != nil {
 		return nil, err
 	}
+	// Visitors have no account, so their files are always buffered and checked.
+	temp, err := os.CreateTemp("", "edms-visitor-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(temp.Name())
+	}()
+	if _, err := io.Copy(temp, io.LimitReader(file, 20*1024*1024+1)); err != nil {
+		return nil, err
+	}
+	if err := checkFile(ctx, s.db, temp, cleanName); err != nil {
+		return nil, err
+	}
 	path := "visitor-attachments/" + key + "-" + cleanName
-	if err = s.storage.Upload(ctx, path, file); err != nil {
+	if err = s.storage.Upload(ctx, path, temp); err != nil {
 		return nil, err
 	}
 	attachment, err := surrealdb.Create[database.VisitorAttachment](ctx, s.db, "visitor_attachments", &database.VisitorAttachment{VisitorRequestID: string(request.ID), SubmissionID: request.SubmissionID, Name: cleanName, MimeType: mime, Size: size, StoragePath: path, CreatedAt: time.Now().UTC()})
@@ -421,7 +437,7 @@ func (s *VisitorService) sendOTP(ctx context.Context, actor, email, name, otp st
 		}
 		return nil
 	}
-	_, err := s.email.QueueEmail(ctx, actor, email, "Your EDMS verification code", "Hello "+name+",\n\nYour verification code is "+otp+". It expires in 10 minutes.\n")
+	_, err := s.email.QueueEmail(ctx, actor, email, "Your "+s.cfg.SMTP.Product()+" verification code", "Hello "+name+",\n\nYour verification code is "+otp+". It expires in 10 minutes.\n")
 	return err
 }
 
@@ -429,7 +445,7 @@ func (s *VisitorService) sendAccessCode(ctx context.Context, actor, email, name,
 	if s.cfg.SMTP.Host == "" {
 		return nil
 	}
-	_, err := s.email.QueueEmail(ctx, actor, email, "Your EDMS visitor request", "Hello "+name+",\n\nOpen "+strings.TrimRight(s.cfg.SMTP.AppURL, "/")+"/visit and enter access code "+code+".\n")
+	_, err := s.email.QueueEmail(ctx, actor, email, "Your "+s.cfg.SMTP.Product()+" visitor request", "Hello "+name+",\n\nOpen "+strings.TrimRight(s.cfg.SMTP.AppURL, "/")+"/visit and enter access code "+code+".\n")
 	return err
 }
 

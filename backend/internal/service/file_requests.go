@@ -173,6 +173,12 @@ func (s *FileRequestService) CompleteUpload(ctx context.Context, token, sessionI
 	rid, _ := database.ParseRecordID(string(request.ID))
 	_, _ = surrealdb.Query[any](ctx, s.db, "UPDATE $request SET received_files += 1, updated_at = time::now()", map[string]any{"request": rid})
 	_ = writeAudit(ctx, s.db, request.CreatedBy, "file_request.received", "document", string(doc.ID), map[string]any{"sender_email": senderEmail})
+	sender := firstNonEmpty(strings.TrimSpace(senderName), strings.TrimSpace(senderEmail), "Someone")
+	notify(ctx, []string{request.CreatedBy}, Notice{
+		Kind: database.NotificationFileReceived, Title: sender + " uploaded " + doc.Name,
+		Body: request.Title, Link: "/documents/" + string(doc.ID), Resource: "document", ResourceID: string(doc.ID),
+		Email: true, OrgID: request.OrgID,
+	})
 	return doc, nil
 }
 

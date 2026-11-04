@@ -40,4 +40,5 @@ const (
 	VersionSourceConversion       = "conversion"
 	VersionSourceSignature        = "signature"
 	VersionSourceRestore          = "restore"
+	VersionSourceMicrosoft365     = "microsoft365_edit"
 )

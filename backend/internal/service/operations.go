@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"mime"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/surrealdb/surrealdb.go"
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
+	"github.com/xmtrxi/edms/internal/observability"
 	"github.com/xmtrxi/edms/internal/queue"
 )
 
@@ -119,20 +122,87 @@ func (s *OperationsService) deliver(ctx context.Context, item *database.EmailDel
 		return surrealdb.Merge[database.EmailDelivery](ctx, s.db, mustRecordID(string(item.ID)), map[string]any{"status": "failed", "attempts": attempts, "last_error": "SMTP is not configured", "updated_at": now})
 	}
 	auth := smtp.PlainAuth("", s.smtp.Username, s.smtp.Password, s.smtp.Host)
-	message := []byte("To: " + item.Recipient + "\r\nSubject: " + item.Subject + "\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n" + item.Body)
-	err := smtp.SendMail(s.smtp.Host+":"+s.smtp.Port, auth, s.smtp.From, []string{item.Recipient}, message)
-	updates := map[string]any{"attempts": attempts, "updated_at": now}
-	if err != nil {
+	messageID := item.MessageID
+	if messageID == "" {
+		messageID = newMessageID(s.smtp.From)
+	}
+	message := buildMessage(item, s.smtp.From, messageID, emailEventsProvider, now)
+	err := smtp.SendMail(s.smtp.Host+":"+s.smtp.Port, auth, envelopeAddress(s.smtp.From), []string{item.Recipient}, message)
+	updates := map[string]any{"attempts": attempts, "updated_at": now, "message_id": messageID}
+	switch {
+	case err != nil:
 		updates["status"] = "failed"
 		updates["last_error"] = err.Error()
-	} else {
+	case emailEventsProvider != "":
+		// The provider reports delivery or bounces later through its webhook.
+		updates["status"] = "sent"
+		updates["last_error"] = ""
+		updates["sent_at"] = now
+	default:
+		// Without callbacks, the server accepting the message is all we learn.
 		updates["status"] = "delivered"
 		updates["last_error"] = ""
+		updates["sent_at"] = now
 		updates["delivered_at"] = now
 	}
+	observability.Emails.WithLabelValues(updates["status"].(string)).Inc()
 	merged, mergeErr := surrealdb.Merge[database.EmailDelivery](ctx, s.db, mustRecordID(string(item.ID)), updates)
 	if mergeErr != nil {
 		return nil, mergeErr
 	}
 	return merged, nil
+}
+
+// emailEventsProvider names the mail provider whose webhooks report delivery.
+// It decides which tracking headers outgoing mail carries. Set at startup.
+var emailEventsProvider string
+
+// UseEmailEvents records which provider sends delivery callbacks.
+func UseEmailEvents(provider string) { emailEventsProvider = provider }
+
+// buildMessage renders a plain-text email with the headers mail servers and
+// spam filters expect, plus the provider's tracking header so its webhooks
+// can name the delivery.
+func buildMessage(item *database.EmailDelivery, from, messageID, provider string, now time.Time) []byte {
+	id := string(item.ID)
+	var b strings.Builder
+	header := func(name, value string) {
+		b.WriteString(name + ": " + strings.NewReplacer("\r", "", "\n", "").Replace(value) + "\r\n")
+	}
+	header("From", from)
+	header("To", item.Recipient)
+	header("Subject", mime.QEncoding.Encode("utf-8", item.Subject))
+	header("Date", now.Format(time.RFC1123Z))
+	header("Message-ID", messageID)
+	header("MIME-Version", "1.0")
+	header("Content-Type", "text/plain; charset=UTF-8")
+	header("Content-Transfer-Encoding", "8bit")
+	header("X-EDMS-Delivery-ID", id)
+	switch provider {
+	case "mailgun":
+		header("X-Mailgun-Variables", `{"edms_delivery_id":"`+id+`"}`)
+	case "postmark":
+		header("X-PM-Metadata-edms_delivery_id", id)
+	case "sendgrid":
+		header("X-SMTPAPI", `{"unique_args":{"edms_delivery_id":"`+id+`"}}`)
+	}
+	b.WriteString("\r\n")
+	b.WriteString(strings.ReplaceAll(strings.ReplaceAll(item.Body, "\r\n", "\n"), "\n", "\r\n"))
+	return []byte(b.String())
+}
+
+func newMessageID(from string) string {
+	domain := "edms.local"
+	if at := strings.LastIndex(envelopeAddress(from), "@"); at >= 0 {
+		domain = envelopeAddress(from)[at+1:]
+	}
+	return "<" + randomToken() + "@" + domain + ">"
+}
+
+// envelopeAddress takes the bare address from "Name <user@example.com>".
+func envelopeAddress(from string) string {
+	if parsed, err := mail.ParseAddress(from); err == nil {
+		return parsed.Address
+	}
+	return from
 }

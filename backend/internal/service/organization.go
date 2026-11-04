@@ -790,3 +790,25 @@ func (s *OrganizationService) uniqueSlug(ctx context.Context, name string) (stri
 func hashToken(token string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(token)))
 }
+
+// JoinDefaultOrganization adds a person who signed in through single sign-on
+// to the install's organization as a member. It is for self-hosted installs,
+// where the identity provider decides who may enter.
+func (s *OrganizationService) JoinDefaultOrganization(ctx context.Context, user *database.User) (*database.Organization, error) {
+	orgs, err := queryRows[database.Organization](ctx, s.db,
+		"SELECT * FROM organizations WHERE kind = $kind ORDER BY created_at LIMIT 1",
+		map[string]any{"kind": database.OrganizationKindOrganization})
+	if err != nil {
+		return nil, err
+	}
+	if len(orgs) == 0 {
+		return nil, ErrNoOrganization
+	}
+	org := orgs[0]
+	if _, err := s.Membership(ctx, string(org.ID), string(user.ID)); errors.Is(err, ErrNotMember) {
+		if _, err := s.addMember(ctx, string(org.ID), string(user.ID), database.MembershipRoleMember, ""); err != nil {
+			return nil, err
+		}
+	}
+	return &org, s.SetLastOrganization(ctx, string(user.ID), string(org.ID))
+}

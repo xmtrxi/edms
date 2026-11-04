@@ -31,7 +31,7 @@ func (p *HTTPCompatibleProvider) Classify(ctx context.Context, document Document
 		return Classification{}, err
 	}
 	var result Classification
-	clean := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(answer), "```json"), "```"))
+	clean := stripCodeFence(answer)
 	if err := json.Unmarshal([]byte(clean), &result); err != nil {
 		return Classification{}, fmt.Errorf("AI returned invalid classification JSON: %w", err)
 	}
@@ -54,10 +54,12 @@ func (p *HTTPCompatibleProvider) Ask(ctx context.Context, question string, docum
 	if err != nil {
 		return Answer{}, err
 	}
+	// Citations are bracketed, so documents:1 is not cited by [documents:10].
 	citations := []string{}
 	for i := range documents {
-		if strings.Contains(text, documents[i].DocumentID) {
-			citations = append(citations, documents[i].DocumentID)
+		id := documents[i].DocumentID
+		if id != "" && strings.Contains(text, "["+id+"]") {
+			citations = append(citations, id)
 		}
 	}
 	return Answer{Text: text, Citations: citations}, nil
@@ -128,4 +130,18 @@ func (p *HTTPCompatibleProvider) post(ctx context.Context, path string, payload 
 		return fmt.Errorf("AI request failed (%d): %s", response.StatusCode, strings.TrimSpace(string(message)))
 	}
 	return json.NewDecoder(response.Body).Decode(output)
+}
+
+// stripCodeFence removes a Markdown code fence such as ```json ... ``` or
+// ``` ... ``` that models often wrap JSON in.
+func stripCodeFence(answer string) string {
+	clean := strings.TrimSpace(answer)
+	if !strings.HasPrefix(clean, "```") {
+		return clean
+	}
+	clean = strings.TrimPrefix(clean, "```")
+	if newline := strings.IndexByte(clean, '\n'); newline >= 0 && !strings.ContainsAny(clean[:newline], "{[") {
+		clean = clean[newline+1:]
+	}
+	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(clean), "```"))
 }

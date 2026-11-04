@@ -360,7 +360,7 @@ func mapError(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, service.ErrForbidden), errors.Is(err, service.ErrAccessDenied):
+	case errors.Is(err, service.ErrForbidden), errors.Is(err, service.ErrAccessDenied), errors.Is(err, service.ErrMalwareDetected):
 		return os.ErrPermission
 	case errors.Is(err, service.ErrDocumentNotFound), errors.Is(err, service.ErrFolderNotFound):
 		return os.ErrNotExist

@@ -37,5 +37,10 @@ func Migrations() []surrealgoorm.Migration {
 		addCollaboration{},
 		addAutomation{},
 		addRetention{},
+		addAccountSecurity{},
+		addNotifications{},
+		addPDFJobs{},
+		addM365Sessions{},
+		addEmailEvents{},
 	}
 }

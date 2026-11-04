@@ -69,7 +69,11 @@ func (h *OrganizationsHandler) create(c *echo.Context) error {
 		}
 		return respondError(c, status, err.Error())
 	}
-	token, _, err := h.auth.SwitchOrganization(ctx, user, string(org.ID))
+	// Personal access tokens have no session to switch.
+	if middleware.CurrentSessionID(c) == "" {
+		return respondJSON(c, http.StatusCreated, dto.Created(dto.SwitchOrganizationResponse{Organization: dto.NewOrganizationResponse(org, "owner")}))
+	}
+	token, _, err := h.auth.SwitchOrganization(ctx, user, middleware.CurrentSessionID(c), string(org.ID))
 	if err != nil {
 		return respondError(c, http.StatusInternalServerError, "failed to switch organization")
 	}

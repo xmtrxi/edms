@@ -33,6 +33,9 @@ func (h *HealthHandler) health(c *echo.Context) error {
 	if h.deps.Search != nil {
 		checks["search"] = h.deps.Search.Ping(c.Request().Context()) == nil
 	}
+	if h.deps.Scanner != nil {
+		checks["malware_scanner"] = h.deps.Scanner.Ping(c.Request().Context()) == nil
+	}
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"status": "ok",
@@ -44,6 +47,11 @@ func (h *HealthHandler) health(c *echo.Context) error {
 			"esign":          true,
 			"editor":         h.deps.Cfg.Editor.Enabled(),
 			"realtime":       h.deps.Realtime != nil,
+			"malware_scan":   h.deps.Scanner != nil,
+			"pdf_tools":      h.deps.Cfg.PDFTools.URL != "",
+			"microsoft365":   h.deps.Storage != nil && h.deps.Storage.Name() == "sharepoint",
+			"search":         h.deps.Search != nil,
+			"ocr":            h.deps.Cfg.OCR.Docling.BaseURL != "",
 		},
 		"checks": checks,
 	})

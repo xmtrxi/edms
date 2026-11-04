@@ -129,7 +129,8 @@ func (c *DocumensoClient) DownloadCompleted(ctx context.Context, documentID, dow
 		target = c.baseURL + "/api/v1/documents/" + url.PathEscape(documentID) + "/download"
 	} else if parsed, err := url.Parse(target); err != nil || !parsed.IsAbs() || parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return nil, errors.New("invalid signed document download URL")
-	} else if base, err := url.Parse(c.baseURL); err != nil || !strings.EqualFold(parsed.Host, base.Host) {
+	} else if base, err := url.Parse(c.baseURL); err != nil || !strings.EqualFold(parsed.Host, base.Host) || !strings.EqualFold(parsed.Scheme, base.Scheme) {
+		// Same host and scheme, so the API key is never sent in the clear.
 		return nil, errors.New("signed document download URL must use the configured provider host")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
@@ -161,4 +162,3 @@ func stringifyID(value any) string {
 		return ""
 	}
 }
-

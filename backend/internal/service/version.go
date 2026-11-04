@@ -189,6 +189,9 @@ func (s *VersionService) AddVersion(ctx context.Context, userID, documentID stri
 		_, key, _ := strings.Cut(doc.OrgID, ":")
 		path = filepath.ToSlash(filepath.Join("orgs", key, path))
 	}
+	if err := checkFile(ctx, s.DB, temp, name); err != nil {
+		return nil, false, err
+	}
 	if err := s.storage.Upload(ctx, path, temp); err != nil {
 		return nil, false, fmt.Errorf("store new version: %w", err)
 	}

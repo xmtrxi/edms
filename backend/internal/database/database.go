@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 
 	surrealgoorm "github.com/kemboi22/surreal-go-orm"
 	"github.com/kemboi22/surreal-go-orm/migrator"
 	"github.com/surrealdb/surrealdb.go"
+	"github.com/surrealdb/surrealdb.go/pkg/connection"
+	"github.com/surrealdb/surrealdb.go/pkg/connection/gorillaws"
+	surrealhttp "github.com/surrealdb/surrealdb.go/pkg/connection/http"
 	"github.com/xmtrxi/edms/internal/config"
 )
 
@@ -20,7 +24,7 @@ func Connect(ctx context.Context, cfg config.DatabaseConfig) (*DB, error) {
 		return nil, errors.New("surrealdb url is required")
 	}
 
-	client, err := surrealdb.FromEndpointURLString(ctx, cfg.URL)
+	client, err := open(ctx, cfg.URL)
 	if err != nil {
 		return nil, fmt.Errorf("connect to surrealdb: %w", err)
 	}
@@ -41,6 +45,31 @@ func Connect(ctx context.Context, cfg config.DatabaseConfig) (*DB, error) {
 	}
 
 	return &DB{client: client}, nil
+}
+
+// open mirrors surrealdb.FromEndpointURLString but wraps the request
+// marshaler so datetimes are sent in the form every server version accepts.
+func open(ctx context.Context, rawURL string) (*surrealdb.DB, error) {
+	u, err := url.ParseRequestURI(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	conf := connection.NewConfig(u)
+	conf.Marshaler = datetimeMarshaler{inner: conf.Marshaler}
+	if err := conf.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid connection config: %w", err)
+	}
+
+	var con connection.Connection
+	switch u.Scheme {
+	case "http", "https":
+		con = surrealhttp.New(conf)
+	case "ws", "wss":
+		con = gorillaws.New(conf)
+	default:
+		return nil, fmt.Errorf("unsupported surrealdb url scheme %q", u.Scheme)
+	}
+	return surrealdb.FromConnection(ctx, con)
 }
 
 func (db *DB) Close(ctx context.Context) error {

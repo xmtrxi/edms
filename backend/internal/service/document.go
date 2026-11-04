@@ -22,6 +22,7 @@ import (
 	"github.com/xmtrxi/edms/internal/config"
 	"github.com/xmtrxi/edms/internal/database"
 	"github.com/xmtrxi/edms/internal/dto"
+	"github.com/xmtrxi/edms/internal/observability"
 	"github.com/xmtrxi/edms/internal/queue"
 	"github.com/xmtrxi/edms/internal/search"
 	"github.com/xmtrxi/edms/internal/storage"
@@ -44,6 +45,9 @@ type DocumentService struct {
 }
 
 func NewDocumentService(cfg config.Config, db *surrealdb.DB, provider storage.Provider, q *queue.Client, s *search.Client, logger *slog.Logger) *DocumentService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &DocumentService{
 		cfg:     cfg,
 		DB:      db,
@@ -154,6 +158,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	if existing != nil {
 		// The bytes already exist, so never create another row or send them
 		// through OCR again. Re-OCR is an explicit action on the existing document.
+		observability.Uploads.WithLabelValues("duplicate").Inc()
 		return existing, true, nil
 	}
 	if _, err := temp.Seek(0, io.SeekStart); err != nil {
@@ -189,6 +194,9 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 		UpdatedAt:          now,
 	}
 
+	if err := checkFile(ctx, s.DB, temp, in.Name); err != nil {
+		return nil, false, err
+	}
 	if err := s.storage.Upload(ctx, storagePath, temp); err != nil {
 		return nil, false, fmt.Errorf("store file: %w", err)
 	}
@@ -217,6 +225,7 @@ func (s *DocumentService) Upload(ctx context.Context, in UploadInput) (*database
 	s.stageOCR(ctx, created, version)
 	fireAutomation(ctx, database.TriggerDocumentCreated, created)
 
+	observability.Uploads.WithLabelValues("stored").Inc()
 	return created, false, nil
 }
 

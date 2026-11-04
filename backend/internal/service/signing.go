@@ -68,6 +68,10 @@ func (s *SigningService) Complete(ctx context.Context, providerDocumentID, downl
 	if next < 2 {
 		next = 2
 	}
+	// The signed file comes from an outside service, so it is checked too.
+	if err := checkFile(ctx, s.db, temp, document.Name); err != nil {
+		return nil, err
+	}
 	path := VersionStoragePath(request.DocumentID, next, document.Name)
 	if err := s.storage.Upload(ctx, path, temp); err != nil {
 		return nil, fmt.Errorf("store completed document: %w", err)

@@ -9,6 +9,7 @@ import (
 	"github.com/surrealdb/surrealdb.go"
 
 	"github.com/xmtrxi/edms/internal/database"
+	"github.com/xmtrxi/edms/internal/observability"
 )
 
 var ErrAccessDenied = errors.New("forbidden")
@@ -195,7 +196,9 @@ func (s *AccessService) RequireFolder(ctx context.Context, userID, capability, f
 // Order: organization membership, restricted label, admin, creator, the
 // document's own grants (deny wins), the folder chain when the document
 // inherits, then direct shares, which also work across organizations.
-func (s *AccessService) CanDocument(ctx context.Context, userID, capability string, document *database.Document) (bool, error) {
+func (s *AccessService) CanDocument(ctx context.Context, userID, capability string, document *database.Document) (allowed bool, err error) {
+	start := time.Now()
+	defer func() { observability.ObserveAccess("document", start, allowed) }()
 	if document == nil {
 		return false, ErrDocumentNotFound
 	}
@@ -304,7 +307,9 @@ func (s *AccessService) shareAllows(ctx context.Context, userID, capability, doc
 	return false, nil
 }
 
-func (s *AccessService) CanFolder(ctx context.Context, userID, capability, folderID string) (bool, error) {
+func (s *AccessService) CanFolder(ctx context.Context, userID, capability, folderID string) (allowed bool, err error) {
+	start := time.Now()
+	defer func() { observability.ObserveAccess("folder", start, allowed) }()
 	folder, err := s.folder(ctx, folderID)
 	if err != nil || folder == nil {
 		return false, err

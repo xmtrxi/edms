@@ -48,9 +48,16 @@ type SearchInput struct {
 	DocumentIDs []string
 	DocumentID  string
 	Mode        string
-	Page        int
-	PageSize    int
+	// UpdatedSince keeps documents changed at or after this time.
+	UpdatedSince time.Time
+	// Sort is "" for upload order or SortRecent for most recently changed first.
+	Sort     string
+	Page     int
+	PageSize int
 }
+
+// SortRecent lists the most recently changed documents first.
+const SortRecent = "recent"
 
 type SearchResult struct {
 	Items    []SearchItem
@@ -86,7 +93,7 @@ func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResu
 
 	// Meilisearch has no view of category assignments, so fall back to the
 	// database whenever the results must be restricted to a set of ids.
-	if in.Query != "" && in.FolderPath == "" && s.search != nil && len(in.DocumentIDs) == 0 {
+	if in.Query != "" && in.FolderPath == "" && s.search != nil && len(in.DocumentIDs) == 0 && in.UpdatedSince.IsZero() && in.Sort == "" {
 		result, err := s.searchMeili(ctx, in)
 		if err == nil {
 			return result, nil
@@ -103,11 +110,11 @@ func (s *SearchService) Search(ctx context.Context, in SearchInput) (*SearchResu
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.listDocuments(ctx, scope, in.Query, in.Status, in.FolderPath, in.FolderID, in.DocumentIDs, ocrIDs, in.PageSize, offset)
+	items, err := s.listDocuments(ctx, scope, in, ocrIDs, in.PageSize, offset)
 	if err != nil {
 		return nil, err
 	}
-	total, err := s.countDocuments(ctx, scope, in.Query, in.Status, in.FolderPath, in.FolderID, in.DocumentIDs, ocrIDs)
+	total, err := s.countDocuments(ctx, scope, in, ocrIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -379,51 +386,68 @@ func (s *SearchService) allDocuments(ctx context.Context) ([]database.Document, 
 	return (*results)[0].Result, nil
 }
 
-func (s *SearchService) listDocuments(ctx context.Context, scope *VisibleScope, query, status, folderPath, folderID string, documentIDs, ocrIDs []string, limit, offset int) ([]SearchItem, error) {
+// documentFilter builds the WHERE clause the database listing and its count share.
+func documentFilter(scope *VisibleScope, in SearchInput, ocrIDs []string) (string, map[string]any, error) {
 	clause, vars := scope.Clause()
-	sql := "SELECT * FROM documents WHERE " + clause
-	vars["limit"] = limit
-	vars["offset"] = offset
-	if status == "" {
+	sql := clause
+	if in.Status == "" {
 		sql += " AND status != 'trashed'"
 	}
-	if query != "" {
+	if in.Query != "" {
 		sql += " AND (string::lowercase(name) CONTAINS $query OR string::lowercase(original_name) CONTAINS $query"
 		if len(ocrIDs) > 0 {
 			recordIDs, err := parseRecordIDs(ocrIDs)
 			if err != nil {
-				return nil, err
+				return "", nil, err
 			}
 			sql += " OR id IN $ocr_documents"
 			vars["ocr_documents"] = recordIDs
 		}
 		sql += ")"
-		vars["query"] = strings.ToLower(query)
+		vars["query"] = strings.ToLower(in.Query)
 	}
-	if status != "" {
+	if in.Status != "" {
 		sql += " AND status = $status"
-		vars["status"] = status
+		vars["status"] = in.Status
 	}
-	if folderPath != "" {
+	if in.FolderPath != "" {
 		sql += " AND metadata.folder_path = $folder_path"
-		vars["folder_path"] = cleanFolderPath(folderPath)
+		vars["folder_path"] = cleanFolderPath(in.FolderPath)
 	}
-	if folderID == RootFolderID {
+	if in.FolderID == RootFolderID {
 		// "My files": documents that are not in any folder.
 		sql += " AND (folder_id = NONE OR folder_id = '')"
-	} else if folderID != "" {
+	} else if in.FolderID != "" {
 		sql += " AND folder_id = $folder_id"
-		vars["folder_id"] = folderID
+		vars["folder_id"] = in.FolderID
 	}
-	if len(documentIDs) > 0 {
-		recordIDs, err := parseRecordIDs(documentIDs)
+	if len(in.DocumentIDs) > 0 {
+		recordIDs, err := parseRecordIDs(in.DocumentIDs)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		sql += " AND id IN $documents"
 		vars["documents"] = recordIDs
 	}
-	sql += " ORDER BY created_at LIMIT $limit START $offset"
+	if !in.UpdatedSince.IsZero() {
+		sql += " AND updated_at >= $updated_since"
+		vars["updated_since"] = in.UpdatedSince
+	}
+	return sql, vars, nil
+}
+
+func (s *SearchService) listDocuments(ctx context.Context, scope *VisibleScope, in SearchInput, ocrIDs []string, limit, offset int) ([]SearchItem, error) {
+	where, vars, err := documentFilter(scope, in, ocrIDs)
+	if err != nil {
+		return nil, err
+	}
+	vars["limit"] = limit
+	vars["offset"] = offset
+	order := "created_at"
+	if in.Sort == SortRecent {
+		order = "updated_at DESC"
+	}
+	sql := "SELECT * FROM documents WHERE " + where + " ORDER BY " + order + " LIMIT $limit START $offset"
 
 	results, err := surrealdb.Query[[]database.Document](ctx, s.client, sql, vars)
 	if err != nil {
@@ -439,49 +463,12 @@ func (s *SearchService) listDocuments(ctx context.Context, scope *VisibleScope, 
 	return items, nil
 }
 
-func (s *SearchService) countDocuments(ctx context.Context, scope *VisibleScope, query, status, folderPath, folderID string, documentIDs, ocrIDs []string) (int64, error) {
-	clause, vars := scope.Clause()
-	sql := "SELECT count() AS total FROM documents WHERE " + clause
-	if status == "" {
-		sql += " AND status != 'trashed'"
+func (s *SearchService) countDocuments(ctx context.Context, scope *VisibleScope, in SearchInput, ocrIDs []string) (int64, error) {
+	where, vars, err := documentFilter(scope, in, ocrIDs)
+	if err != nil {
+		return 0, err
 	}
-	if query != "" {
-		sql += " AND (string::lowercase(name) CONTAINS $query OR string::lowercase(original_name) CONTAINS $query"
-		if len(ocrIDs) > 0 {
-			recordIDs, err := parseRecordIDs(ocrIDs)
-			if err != nil {
-				return 0, err
-			}
-			sql += " OR id IN $ocr_documents"
-			vars["ocr_documents"] = recordIDs
-		}
-		sql += ")"
-		vars["query"] = strings.ToLower(query)
-	}
-	if status != "" {
-		sql += " AND status = $status"
-		vars["status"] = status
-	}
-	if folderPath != "" {
-		sql += " AND metadata.folder_path = $folder_path"
-		vars["folder_path"] = cleanFolderPath(folderPath)
-	}
-	if folderID == RootFolderID {
-		// "My files": documents that are not in any folder.
-		sql += " AND (folder_id = NONE OR folder_id = '')"
-	} else if folderID != "" {
-		sql += " AND folder_id = $folder_id"
-		vars["folder_id"] = folderID
-	}
-	if len(documentIDs) > 0 {
-		recordIDs, err := parseRecordIDs(documentIDs)
-		if err != nil {
-			return 0, err
-		}
-		sql += " AND id IN $documents"
-		vars["documents"] = recordIDs
-	}
-	sql += " GROUP ALL"
+	sql := "SELECT count() AS total FROM documents WHERE " + where + " GROUP ALL"
 
 	results, err := surrealdb.Query[[]map[string]any](ctx, s.client, sql, vars)
 	if err != nil {

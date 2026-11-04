@@ -380,6 +380,11 @@ func (s *ESignService) invite(ctx context.Context, envelope *database.SignatureE
 	body += "Review and sign: " + s.link(r) + "\n\nThis link is personal to you. Don't forward it.\n"
 	s.mail(ctx, envelope, r.Email, "Please sign: "+envelope.Title, body)
 	s.event(ctx, envelope, string(r.ID), "sent", "Emailed "+r.Email, "", "")
+	// Colleagues also see it in the app; the email above already went out.
+	notify(ctx, []string{r.UserID}, Notice{
+		Kind: database.NotificationSignature, Title: sender + " asked you to sign " + envelope.Title,
+		Body: envelope.Message, Link: "/signatures", Resource: "document", ResourceID: envelope.DocumentID,
+	})
 }
 
 // ── Signing (public, by link) ──────────────────────────────────────────────
@@ -674,6 +679,10 @@ func (s *ESignService) Decline(ctx context.Context, token, reason, ip, agent str
 		return err
 	}
 	s.event(ctx, envelope, string(recipient.ID), "declined", firstNonEmpty(reason, "Declined to sign"), ip, agent)
+	notify(ctx, []string{envelope.CreatedBy}, Notice{
+		Kind: database.NotificationSignature, Title: "Everyone has signed " + envelope.Title,
+		Link: "/documents/" + envelope.DocumentID, Resource: "document", ResourceID: envelope.DocumentID,
+	})
 	if sender := s.userEmail(ctx, envelope.CreatedBy); sender != "" {
 		body := fmt.Sprintf("%s declined to sign %q.\n", recipient.Name, envelope.Title)
 		if reason != "" {
@@ -739,6 +748,10 @@ func (s *ESignService) complete(ctx context.Context, envelope *database.Signatur
 	for _, r := range recipients {
 		s.mail(ctx, envelope, r.Email, "Completed: "+envelope.Title, fmt.Sprintf(body, s.link(&r)))
 	}
+	notify(ctx, []string{envelope.CreatedBy}, Notice{
+		Kind: database.NotificationSignature, Title: "Everyone has signed " + envelope.Title,
+		Link: "/documents/" + envelope.DocumentID, Resource: "document", ResourceID: envelope.DocumentID,
+	})
 	if sender := s.userEmail(ctx, envelope.CreatedBy); sender != "" {
 		s.mail(ctx, envelope, sender, "Completed: "+envelope.Title, fmt.Sprintf(body, s.appURL+"/documents/"+envelope.DocumentID))
 	}

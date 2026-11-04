@@ -153,15 +153,21 @@ func (s *LabelService) Process(ctx context.Context, documentID string) error {
 	if len(sample) > 12_000 {
 		sample = sample[:12_000]
 	}
-	if classification, err := s.provider.Classify(ctx, applicationai.DocumentContext{DocumentID: documentID, Name: doc.Name, Text: sample}); err == nil {
-		metadata["ai_classification"] = classification
-	} else if !errors.Is(err, applicationai.ErrDisabled) {
-		s.log.Warn("classify document", "document_id", documentID, "error", err)
+	// The owner's "AI classification" and "AI summaries" preferences decide
+	// whether their documents are sent to the AI service; both default on.
+	if userPreference(ctx, s.db, doc.OwnerID, "ai_classification", true) {
+		if classification, err := s.provider.Classify(ctx, applicationai.DocumentContext{DocumentID: documentID, Name: doc.Name, Text: sample}); err == nil {
+			metadata["ai_classification"] = classification
+		} else if !errors.Is(err, applicationai.ErrDisabled) {
+			s.log.Warn("classify document", "document_id", documentID, "error", err)
+		}
 	}
-	if summary, err := s.provider.Complete(ctx, "Summarize this document in at most three sentences for someone deciding whether to open it. Mention dates, amounts and parties when present.\n\nTitle: "+doc.Name+"\n\n"+sample); err == nil {
-		metadata["ai_summary"] = strings.TrimSpace(summary)
-	} else if !errors.Is(err, applicationai.ErrDisabled) {
-		s.log.Warn("summarize document", "document_id", documentID, "error", err)
+	if userPreference(ctx, s.db, doc.OwnerID, "ai_summaries", true) {
+		if summary, err := s.provider.Complete(ctx, "Summarize this document in at most three sentences for someone deciding whether to open it. Mention dates, amounts and parties when present.\n\nTitle: "+doc.Name+"\n\n"+sample); err == nil {
+			metadata["ai_summary"] = strings.TrimSpace(summary)
+		} else if !errors.Is(err, applicationai.ErrDisabled) {
+			s.log.Warn("summarize document", "document_id", documentID, "error", err)
+		}
 	}
 	metadata["labelled_at"] = time.Now().UTC().Format(time.RFC3339)
 	updated, err := surrealdb.Merge[database.Document](ctx, s.db, rid, map[string]any{"metadata": metadata})
