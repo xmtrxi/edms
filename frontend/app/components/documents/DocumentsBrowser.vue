@@ -37,6 +37,8 @@
       initialStatus?: string;
       showStatusFilter?: boolean;
       showSearch?: boolean;
+      /** Limit to documents changed in the last N days, newest first. */
+      recentDays?: number;
     }>(),
     {
       initialStatus: "",
@@ -77,6 +79,9 @@
       folder_path: folderPath.value || undefined,
       page: page.value,
       page_size: PAGE_SIZE,
+      ...(props.recentDays
+        ? { updated_within: `${props.recentDays}d`, sort: "recent" as const }
+        : {}),
     });
   };
 

@@ -8,7 +8,7 @@
   });
 
   useHead({
-    title: "Archive — Lumen DMS",
+    title: "Archive",
     meta: [{ name: "description", content: "Documents archived from active workspaces." }],
   });
 </script>

@@ -11,7 +11,7 @@
     description: "Your files and the organization’s folders you can open.",
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Drive" }],
   });
-  useHead({ title: "Drive — Lumen DMS" });
+  useHead({ title: "Drive" });
 
   const route = useRoute();
   const router = useRouter();

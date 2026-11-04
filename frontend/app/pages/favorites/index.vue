@@ -10,7 +10,7 @@
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Favorites" }],
   });
 
-  useHead({ title: "Favorites — Lumen DMS" });
+  useHead({ title: "Favorites" });
   const workspace = workspaceService();
   const documents = shallowRef<Document[]>([]);
   const refresh = async () => {

@@ -1,7 +1,5 @@
 <script setup lang="ts">
   import {
-    BellIcon,
-    CheckCheckIcon,
     CommandIcon,
     LogOutIcon,
     MoonIcon,
@@ -14,7 +12,6 @@
   } from "@lucide/vue";
   import { ref, onMounted } from "vue";
   import { useRouter } from "vue-router";
-  import { toast } from "vue-sonner";
 
   import UploadDialog from "@/components/documents/UploadDialog.vue";
   import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -48,18 +45,6 @@
 
   const uploadOpen = ref(false);
   const paletteOpen = ref(false);
-  const notifications = ref<
-    Array<{
-      id: string;
-      initials: string;
-      who: string;
-      action: string;
-      target: string;
-      when: string;
-    }>
-  >([]);
-  const unread = ref(notifications.value.length);
-
   const THEME_KEY = "lumen.theme";
   const isDark = ref(false);
 
@@ -79,19 +64,8 @@
     localStorage.setItem(THEME_KEY, isDark.value ? "dark" : "light");
   };
 
-  const markAllRead = () => {
-    unread.value = 0;
-    toast.success("All notifications marked as read");
-  };
-
-  const clearAll = () => {
-    notifications.value = [];
-    unread.value = 0;
-    toast.success("Notifications cleared");
-  };
-
-  const logout = () => {
-    auth.logout();
+  const logout = async () => {
+    await auth.logout();
     router.push("/auth/login");
   };
 
@@ -158,69 +132,7 @@
         <MoonIcon v-else class="h-4 w-4" />
       </Button>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger as-child>
-          <Button
-            variant="ghost"
-            size="icon"
-            class="text-muted-foreground hover:text-foreground relative"
-            aria-label="Notifications"
-          >
-            <BellIcon class="h-4 w-4" />
-            <span
-              v-if="unread > 0"
-              class="bg-primary absolute top-1.5 right-1.5 h-2 w-2 rounded-full"
-            />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" class="max-h-[420px] w-80 overflow-y-auto">
-          <div class="flex items-center justify-between px-2 py-1.5">
-            <DropdownMenuLabel class="text-xs font-semibold">Notifications</DropdownMenuLabel>
-            <div class="flex items-center gap-1">
-              <button
-                v-if="unread > 0"
-                @click="markAllRead"
-                class="text-muted-foreground hover:text-foreground hover:bg-secondary flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]"
-              >
-                <CheckCheckIcon class="h-3 w-3" /> Mark read
-              </button>
-              <button
-                v-if="notifications.length > 0"
-                @click="clearAll"
-                class="text-muted-foreground hover:text-destructive hover:bg-secondary rounded px-1.5 py-0.5 text-[10px]"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
-          <DropdownMenuSeparator />
-          <div
-            v-if="notifications.length === 0"
-            class="text-muted-foreground p-4 text-center text-xs"
-          >
-            All caught up!
-          </div>
-          <div
-            v-for="n in notifications"
-            :key="n.id"
-            class="hover:bg-secondary/60 cursor-pointer px-3 py-2 transition-colors"
-          >
-            <div class="flex items-start gap-2.5">
-              <Avatar class="mt-0.5 h-6 w-6"
-                ><AvatarFallback class="bg-secondary text-[9px]">{{
-                  n.initials
-                }}</AvatarFallback></Avatar
-              >
-              <div class="min-w-0 text-xs leading-snug">
-                <span class="font-medium">{{ n.who }}</span>
-                <span class="text-muted-foreground"> {{ n.action }} </span>
-                <span class="font-medium">{{ n.target }}</span>
-                <div class="text-muted-foreground mt-0.5 text-[10px]">{{ n.when }}</div>
-              </div>
-            </div>
-          </div>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <NotificationBell />
 
       <Separator orientation="vertical" class="mx-1 h-5" />
 
@@ -245,8 +157,8 @@
             <div class="text-muted-foreground text-xs font-normal">{{ me.email }}</div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem @click="router.push('/settings')">
-            <UserIcon class="mr-2 h-4 w-4" /> Profile
+          <DropdownMenuItem @click="router.push('/settings/account')">
+            <UserIcon class="mr-2 h-4 w-4" /> Account
           </DropdownMenuItem>
           <DropdownMenuItem @click="router.push('/settings')">
             <SettingsIcon class="mr-2 h-4 w-4" /> Settings

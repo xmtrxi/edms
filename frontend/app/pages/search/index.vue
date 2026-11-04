@@ -55,7 +55,7 @@
   });
 
   useHead({
-    title: "Search — Lumen DMS",
+    title: "Search",
     meta: [
       { name: "description", content: "Search across your documents, OCR text, and metadata." },
     ],

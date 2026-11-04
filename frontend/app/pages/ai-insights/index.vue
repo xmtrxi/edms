@@ -11,7 +11,7 @@
     description: "Ask questions and get answers from the documents you can open, with sources.",
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Ask" }],
   });
-  useHead({ title: "Ask — Lumen DMS" });
+  useHead({ title: "Ask" });
 
   interface Turn {
     question: string;
@@ -32,13 +32,23 @@
     () => folderService.folders.value.find((folder) => folder.id === folderId.value)?.name,
   );
 
-  onMounted(() => void folderService.fetchFolders());
+  const docs = documentsService();
+  const categoryService = categoriesService();
+  onMounted(() => {
+    void folderService.fetchFolders();
+    void docs.fetchDocuments({ sort: "recent", page_size: 2, status: "ready" });
+    void categoryService.fetchCategories();
+  });
 
-  const suggestions = [
-    "What decisions were made about the budget?",
-    "Which contracts expire in the next three months?",
-    "Summarize the latest board minutes",
-  ];
+  // Starters drawn from the files and categories this person actually has.
+  const suggestions = computed(() => {
+    const items: string[] = [];
+    for (const doc of docs.documents.value) items.push(`Summarize ${doc.name}`);
+    const category = categoryService.categories.value[0];
+    if (category) items.push(`What are the key points across my ${category.name} documents?`);
+    if (folderName.value) items.push(`What changed recently in ${folderName.value}?`);
+    return items.slice(0, 3);
+  });
 
   // Splits an answer into text and [n] citation markers.
   const segments = (turn: Turn) => {

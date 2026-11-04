@@ -8,11 +8,11 @@
   });
 
   useHead({
-    title: "Recent — Lumen DMS",
-    meta: [{ name: "description", content: "Recently opened and uploaded documents." }],
+    title: "Recent",
+    meta: [{ name: "description", content: "Documents changed in the last 30 days." }],
   });
 </script>
 
 <template>
-  <DocumentsBrowser :show-status-filter="false" />
+  <DocumentsBrowser :show-status-filter="false" :recent-days="30" />
 </template>

@@ -11,7 +11,7 @@
   import { formatBytes, formatDate } from "@/utils/format";
 
   definePageMeta({ layout: "auth" });
-  useHead({ title: "Send files — Lumen DMS", meta: [{ name: "robots", content: "noindex" }] });
+  useHead({ title: "Send files", meta: [{ name: "robots", content: "noindex" }] });
 
   const route = useRoute();
   const token = computed(() => String((route.params as Record<string, string>).token ?? ""));
@@ -92,13 +92,15 @@
       input.value.value = "";
     }
   };
+
+  const brand = useBrand();
 </script>
 
 <template>
   <div class="flex min-h-dvh flex-col">
     <header class="flex items-center gap-2 border-b px-4 py-3 sm:px-6">
       <FileTextIcon class="text-primary size-5" />
-      <span class="text-sm font-semibold">Lumen DMS</span>
+      <span class="text-sm font-semibold">{{ brand }}</span>
     </header>
     <main class="flex flex-1 justify-center p-4 sm:p-8">
       <div v-if="state === 'loading'" class="w-full max-w-lg space-y-3">

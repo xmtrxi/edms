@@ -43,7 +43,7 @@
   const submitting = shallowRef(false);
 
   useHead(() => ({
-    title: session.value ? `Sign ${session.value.envelope.title} — Lumen DMS` : "Sign — Lumen DMS",
+    title: session.value ? `Sign ${session.value.envelope.title}` : "Sign",
     meta: [{ name: "robots", content: "noindex" }],
   }));
 

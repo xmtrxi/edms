@@ -24,7 +24,7 @@
   const downloading = shallowRef(false);
 
   useHead(() => ({
-    title: linked.value ? `${linked.value.document.name} — Lumen DMS` : "Shared file — Lumen DMS",
+    title: linked.value ? `${linked.value.document.name}` : "Shared file",
     meta: [{ name: "robots", content: "noindex" }],
   }));
 
@@ -82,13 +82,15 @@
   onBeforeUnmount(() => {
     if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
   });
+
+  const brand = useBrand();
 </script>
 
 <template>
   <div class="flex min-h-dvh flex-col">
     <header class="border-border flex items-center gap-2 border-b px-4 py-3 sm:px-6">
       <FileTextIcon class="text-primary size-5" />
-      <span class="text-sm font-semibold">Lumen DMS</span>
+      <span class="text-sm font-semibold">{{ brand }}</span>
     </header>
 
     <main class="flex flex-1 items-start justify-center p-4 sm:p-8">

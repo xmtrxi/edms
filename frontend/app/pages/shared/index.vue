@@ -12,7 +12,7 @@
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Shared" }],
   });
 
-  useHead({ title: "Shared with me — Lumen DMS" });
+  useHead({ title: "Shared with me" });
   const workspace = workspaceService();
   const sharing = sharingService();
   const documents = shallowRef<Document[]>([]);

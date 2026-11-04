@@ -9,7 +9,7 @@
   import type { VisitorPortal } from "@/types/api";
 
   definePageMeta({ layout: "visitor" });
-  useHead({ title: "Visitor request — EDMS" });
+  useHead({ title: "Visitor request" });
 
   const service = visitorsService();
   const portal = shallowRef<VisitorPortal | null>(null);

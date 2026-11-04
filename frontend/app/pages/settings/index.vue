@@ -11,14 +11,15 @@
     description: "Personal office workflow preferences.",
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Settings" }],
   });
-  useHead({ title: "Settings — Lumen DMS" });
+  useHead({ title: "Settings" });
   const workspace = workspaceService();
   const auth = useAuthStore();
   const preferences = reactive({
     email_notifications: true,
     workflow_digest: true,
-    ai_summaries: false,
-    ai_classification: false,
+    // Matches the server: these apply until you turn them off.
+    ai_summaries: true,
+    ai_classification: true,
     compact_rows: false,
   });
   const load = async () => {
@@ -33,25 +34,26 @@
     {
       key: "email_notifications",
       label: "Email notifications",
-      description: "Receive important request and route updates.",
+      description: "Email me when something needs my attention or moves forward.",
       icon: BellIcon,
     },
     {
       key: "workflow_digest",
       label: "Workflow digest",
-      description: "Bundle routine movement into a concise daily summary.",
+      description:
+        "Send routine updates as one daily email; requests for action still arrive at once.",
       icon: Settings2Icon,
     },
     {
       key: "ai_summaries",
       label: "AI summaries",
-      description: "Allow configured AI to summarize selected office records.",
+      description: "Summarize my documents with the configured AI after their text is read.",
       icon: BotIcon,
     },
     {
       key: "ai_classification",
       label: "AI classification",
-      description: "Suggest record categories without locking you to a provider.",
+      description: "Suggest categories for my documents with the configured AI.",
       icon: ShieldIcon,
     },
   ] as const;
@@ -62,7 +64,9 @@
       <div class="border-b p-6">
         <h1 class="text-lg font-semibold">Workspace preferences</h1>
         <p class="text-muted-foreground mt-1 text-sm">
-          Saved to your account and applied anywhere you sign in.
+          Saved to your account and applied anywhere you sign in. Password, two-step sign-in and
+          sessions are under
+          <NuxtLink to="/settings/account" class="text-primary hover:underline">Account</NuxtLink>.
         </p>
       </div>
       <div class="divide-y">

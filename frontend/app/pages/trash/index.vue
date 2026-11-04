@@ -10,7 +10,7 @@
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Trash" }],
   });
 
-  useHead({ title: "Trash — Lumen DMS" });
+  useHead({ title: "Trash" });
   const workspace = workspaceService();
   const documents = shallowRef<Document[]>([]);
   const refresh = async () => {

@@ -63,6 +63,8 @@
     creating.value = false;
     if (!ok) toast.error(auth.error || "Could not create organization");
   };
+
+  const brand = useBrand();
 </script>
 
 <template>
@@ -77,11 +79,11 @@
           class="from-primary to-primary/60 text-primary-foreground shadow-glow grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-xs font-semibold"
         >
           <UserIcon v-if="current?.kind === 'personal'" class="h-4 w-4" />
-          <span v-else>{{ initialsOf(current?.name ?? "Lumen") }}</span>
+          <span v-else>{{ initialsOf(current?.name ?? brand) }}</span>
         </div>
         <div v-if="!collapsed" class="flex min-w-0 flex-1 flex-col leading-tight">
           <span class="truncate text-sm font-semibold tracking-tight">{{
-            current?.name ?? "Lumen DMS"
+            current?.name ?? brand
           }}</span>
           <span class="text-muted-foreground truncate text-[11px]">{{ subtitle(current) }}</span>
         </div>

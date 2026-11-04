@@ -9,7 +9,7 @@
     title: "Office desk",
     description: "Live records, incoming requests, and the work moving through your office.",
   });
-  useHead({ title: "Office desk — EDMS" });
+  useHead({ title: "Office desk" });
 
   const workspace = workspaceService();
   const overview = shallowRef<import("@/types/api").DashboardOverview | null>(null);

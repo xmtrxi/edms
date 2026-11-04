@@ -2,6 +2,7 @@
   import {
     ChevronRightIcon,
     CloudDownloadIcon,
+    CombineIcon,
     FolderIcon,
     FolderInputIcon,
     FileSpreadsheetIcon,
@@ -108,6 +109,54 @@
   );
   const canUploadHere = computed(() => !props.folderId || current.value?.can_upload !== false);
   const selectedDocs = computed(() => documents.value.filter((doc) => selected.value.has(doc.id)));
+
+  // Merging needs two or more PDFs or Office files the server can convert.
+  const pdfTools = pdfToolsService();
+  const canMerge = computed(
+    () =>
+      Boolean(features.value?.pdf_tools) &&
+      selectedDocs.value.length >= 2 &&
+      selectedDocs.value.every((doc) =>
+        ["pdf", "docx", "xlsx", "pptx"].includes(fileTypeFromMime(doc.mime_type)),
+      ),
+  );
+  const merging = new Set<string>();
+  const auth = useAuthStore();
+  const { subscribe } = useRealtime();
+  const stopJobs = auth.user?.id
+    ? subscribe(`user:${auth.user.id}`, (event) => {
+        if (event.type !== "pdf_job") return;
+        const job = event.data as {
+          id: string;
+          status: string;
+          output_name?: string;
+          error?: string;
+        };
+        if (!merging.has(job.id) || (job.status !== "succeeded" && job.status !== "failed")) return;
+        merging.delete(job.id);
+        if (job.status === "succeeded") {
+          toast.success(`${job.output_name ?? "Merged PDF"} is ready`);
+          refresh();
+        } else {
+          toast.error("Merging failed", { description: job.error });
+        }
+      })
+    : undefined;
+  onBeforeUnmount(() => stopJobs?.());
+
+  const merge = async () => {
+    const job = await pdfTools.run(
+      "merge",
+      selectedDocs.value.map((doc) => doc.id),
+    );
+    if (!job) {
+      toast.error(pdfTools.error.value || "Could not merge these files");
+      return;
+    }
+    merging.add(job.id);
+    selected.value = new Set();
+    toast(`Merging ${job.document_ids.length} files — the PDF will appear here when it's ready.`);
+  };
 
   const loadDocuments = async (append = false) => {
     const { $api } = useNuxtApp();
@@ -439,6 +488,14 @@
         >
         <Button size="sm" variant="secondary" @click="download(selectedDocs)"
           ><CloudDownloadIcon class="size-4" />Download</Button
+        >
+        <Button
+          v-if="canMerge"
+          size="sm"
+          variant="secondary"
+          :disabled="pdfTools.busy.value"
+          @click="merge"
+          ><CombineIcon class="size-4" />Merge PDFs</Button
         >
         <Button size="sm" variant="secondary" @click="trash(selectedDocs)"
           ><Trash2Icon class="size-4" />Trash</Button

@@ -1,6 +1,13 @@
 import { getToken } from "@/utils/token";
 
-const guestOnlyPages = new Set(["/auth/login", "/auth/register"]);
+const guestOnlyPages = new Set(["/auth/login", "/auth/register", "/auth/forgot-password"]);
+// Reached from emailed links or the identity provider, signed in or not.
+const openAuthPages = new Set([
+  "/auth/invite",
+  "/auth/reset-password",
+  "/auth/verify-email",
+  "/auth/sso",
+]);
 
 export default defineNuxtRouteMiddleware(async (to) => {
   if (import.meta.server) return;
@@ -10,7 +17,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   if (to.path.startsWith("/visit")) return;
   // Invitation and share links work whether or not the person is signed in.
   if (
-    to.path === "/auth/invite" ||
+    openAuthPages.has(to.path) ||
     to.path.startsWith("/s/") ||
     to.path.startsWith("/r/") ||
     to.path.startsWith("/sign/")

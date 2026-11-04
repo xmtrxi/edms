@@ -18,6 +18,7 @@
     Building2Icon,
     ShieldCheckIcon,
     HistoryIcon,
+    ActivityIcon,
     SignatureIcon,
     ZapIcon,
     ArchiveRestoreIcon,
@@ -79,6 +80,13 @@
     { title: "Members", url: "/users", icon: UsersIcon },
     { title: "Audit Log", url: "/audit", icon: HistoryIcon },
   ]);
+  // Integrations cover the whole installation, so only self-hosted
+  // administrators see them.
+  const adminItems = computed(() =>
+    auth.isOrgAdmin && auth.meta?.mode === "selfhosted"
+      ? [...admin.value, { title: "Integrations", url: "/admin/integrations", icon: ActivityIcon }]
+      : admin.value,
+  );
 
   const workspaces = ref<NavItem[]>([
     { title: "Teams", url: "/teams", icon: UsersIcon },
@@ -174,7 +182,7 @@
         >
         <SidebarGroupContent>
           <SidebarMenu>
-            <SidebarMenuItem v-for="item in admin" :key="item.title">
+            <SidebarMenuItem v-for="item in adminItems" :key="item.title">
               <SidebarMenuButton
                 :isActive="isActive(item.url)"
                 :tooltip="item.title"

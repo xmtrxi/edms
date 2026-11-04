@@ -37,7 +37,7 @@
     description: "Rules that file, label, share and announce documents for you.",
     breadcrumbs: [{ label: "Administration", to: "/" }, { label: "Automation" }],
   });
-  useHead({ title: "Automation — Lumen DMS" });
+  useHead({ title: "Automation" });
 
   const auth = useAuthStore();
   const service = automationService();

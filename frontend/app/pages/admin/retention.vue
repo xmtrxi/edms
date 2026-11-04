@@ -30,7 +30,7 @@
     description: "How long documents are kept, and what happens to them afterwards.",
     breadcrumbs: [{ label: "Administration", to: "/" }, { label: "Retention" }],
   });
-  useHead({ title: "Retention — Lumen DMS" });
+  useHead({ title: "Retention" });
 
   const auth = useAuthStore();
   const service = retentionService();
@@ -149,8 +149,8 @@
             </p>
             <p class="text-muted-foreground mt-2 text-xs">
               <template v-if="policy.last_run_at"
-                >Last run {{ formatDateTime(policy.last_run_at) }} ·
-                {{ policy.last_count }} {{ policy.last_count === 1 ? "file" : "files" }}</template
+                >Last run {{ formatDateTime(policy.last_run_at) }} · {{ policy.last_count }}
+                {{ policy.last_count === 1 ? "file" : "files" }}</template
               >
               <template v-else>Hasn’t run yet</template>
             </p>

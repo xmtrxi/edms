@@ -16,7 +16,7 @@
     description: "Follow papers as they move through the office.",
     breadcrumbs: [{ label: "Office", to: "/" }, { label: "Workflows" }],
   });
-  useHead({ title: "Workflows — Lumen DMS" });
+  useHead({ title: "Workflows" });
   const workspace = workspaceService();
   const workflows = shallowRef<DocumentRoute[]>([]);
   const refresh = async () => {

@@ -13,7 +13,7 @@
     description: "Monitor the office document store.",
     breadcrumbs: [{ label: "Administration", to: "/settings" }, { label: "Storage" }],
   });
-  useHead({ title: "Storage connection — Lumen DMS" });
+  useHead({ title: "Storage connection" });
   const workspace = workspaceService();
   const status = shallowRef<{
     provider: string;

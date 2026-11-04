@@ -79,7 +79,7 @@
   const selected = shallowRef<number | null>(null);
   const settings = reactive({ title: "", message: "", sequential: false, requireOTP: true });
 
-  useHead(() => ({ title: `Sign ${doc.value?.name ?? "document"} — Lumen DMS` }));
+  useHead(() => ({ title: `Sign ${doc.value?.name ?? "document"}` }));
 
   const indexOf = (key: number) => recipients.value.findIndex((item) => item.key === key);
   const colorOf = (key: number) => recipientColor(indexOf(key));

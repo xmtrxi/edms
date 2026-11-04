@@ -38,14 +38,44 @@ export interface User {
   email: string;
   name: string;
   status: UserStatus;
+  email_verified?: boolean;
+  mfa_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
 
 export interface AuthResponse {
-  token: string;
+  token?: string;
   user: User;
   organization: Organization;
+  /** Two-step sign-in: exchange mfa_token and a code at /auth/login/mfa. */
+  mfa_required?: boolean;
+  mfa_token?: string;
+  /** The new account must confirm its email before it can sign in. */
+  verification_required?: boolean;
+}
+
+/** What happened when the person submitted the sign-in form. */
+export type LoginOutcome = "signed-in" | "mfa" | "unverified" | "failed";
+
+export type SessionMethod = "password" | "sso" | "signup" | "invite";
+
+/** One place the person is signed in. */
+export interface AccountSession {
+  id: string;
+  method: SessionMethod;
+  ip?: string;
+  user_agent?: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+export interface MFASetup {
+  secret: string;
+  /** otpauth:// URI for authenticator apps. */
+  uri: string;
 }
 
 // ── Organizations ──────────────────────────────────────────────────────────
@@ -59,6 +89,15 @@ export interface DeploymentMeta {
   personal_workspaces: boolean;
   multi_org: boolean;
   organization_name?: string;
+  /** Single sign-on through the organization's identity provider. */
+  sso?: boolean;
+  sso_label?: string;
+  /** False when single sign-on is the only way in. */
+  password_login?: boolean;
+  require_verified_email?: boolean;
+  /** Product name from APP_NAME. */
+  app_name?: string;
+  version?: string;
 }
 
 export type OrganizationKind = "personal" | "organization";
@@ -539,6 +578,10 @@ export interface ListDocumentsParams {
   page_size?: number;
   mode?: "documents" | "passages";
   document_id?: string;
+  /** Only documents changed in the last N days, written like "30d". */
+  updated_within?: string;
+  /** "recent" lists the most recently changed first. */
+  sort?: "recent";
 }
 
 export interface ManagedFolder {
@@ -976,4 +1019,103 @@ export interface RetentionPreview {
   count: number;
   held: number;
   sample: Document[];
+}
+
+// ── Notifications ──────────────────────────────────────────────────────────
+
+export type NotificationKind =
+  | "share"
+  | "mention"
+  | "access_request"
+  | "access_decision"
+  | "route_step"
+  | "route_outcome"
+  | "form_approval"
+  | "form_outcome"
+  | "signature"
+  | "file_received";
+
+export interface AppNotification {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  body?: string;
+  /** App path to open, such as /documents/documents:abc. */
+  link?: string;
+  actor?: { id: string; name: string; email?: string };
+  read_at?: string;
+  created_at: string;
+}
+
+export interface NotificationPage {
+  items: AppNotification[];
+  unread: number;
+}
+
+// ── PDF tools ──────────────────────────────────────────────────────────────
+
+export type PdfOperation = "merge" | "compress" | "rotate" | "watermark" | "page_numbers";
+export type PdfJobStatus = "queued" | "running" | "retrying" | "succeeded" | "failed";
+
+export interface PdfOptions {
+  level?: number;
+  angle?: number;
+  text?: string;
+  opacity?: number;
+  position?: number;
+}
+
+export interface PdfJob {
+  id: string;
+  operation: PdfOperation;
+  document_ids: string[];
+  options?: PdfOptions;
+  output_name?: string;
+  status: PdfJobStatus;
+  attempts: number;
+  error?: string;
+  result_document_id?: string;
+  result_version_id?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+// ── Integrations ───────────────────────────────────────────────────────────
+
+export interface IntegrationCheck {
+  name: string;
+  status: "ok" | "warning" | "failing";
+  detail: string;
+  count?: number;
+  fixable?: boolean;
+}
+
+export interface QueueStats {
+  queue: string;
+  pending: number;
+  active: number;
+  scheduled: number;
+  retry: number;
+  dead: number;
+  processed_today: number;
+  failed_today: number;
+  paused: boolean;
+}
+
+export interface DeadTask {
+  id: string;
+  queue: string;
+  type: string;
+  payload?: Record<string, unknown>;
+  last_error: string;
+  retried: number;
+  failed_at: string;
+}
+
+export interface ReconcileResult {
+  emails: number;
+  ocr: number;
+  pdf_jobs: number;
+  dead_tasks: number;
 }

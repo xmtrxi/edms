@@ -13,7 +13,7 @@
     description: "Documents waiting for your signature, and requests you sent.",
     breadcrumbs: [{ label: "Workspace", to: "/" }, { label: "Signatures" }],
   });
-  useHead({ title: "Signatures — Lumen DMS" });
+  useHead({ title: "Signatures" });
 
   const route = useRoute();
   const router = useRouter();

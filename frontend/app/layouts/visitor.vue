@@ -1,7 +1,11 @@
+<script setup lang="ts">
+  const brand = useBrand();
+</script>
+
 <template>
   <div class="visitor-shell min-h-dvh">
     <header class="mx-auto flex w-full max-w-6xl items-center justify-between px-5 py-6 sm:px-8">
-      <NuxtLink to="/visit" class="flex items-center gap-3" aria-label="EDMS visitor desk">
+      <NuxtLink to="/visit" class="flex items-center gap-3" :aria-label="`${brand} visitor desk`">
         <span
           class="bg-primary text-primary-foreground grid size-9 place-items-center rounded-md font-mono text-xs font-semibold"
           >ED</span

@@ -5,6 +5,13 @@ export interface Features {
   esign: boolean;
   realtime: boolean;
   signing: boolean;
+  malware_scan?: boolean;
+  pdf_tools?: boolean;
+  /** "Open in Microsoft 365" for files stored in SharePoint. */
+  microsoft365?: boolean;
+  search?: boolean;
+  /** Text recognition with Docling. */
+  ocr?: boolean;
 }
 
 let pending: Promise<void> | null = null;

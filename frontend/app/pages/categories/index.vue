@@ -26,7 +26,7 @@
   });
 
   useHead({
-    title: "Categories — Lumen DMS",
+    title: "Categories",
     meta: [{ name: "description", content: "Manage document categories and subcategories." }],
   });
 

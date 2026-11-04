@@ -32,7 +32,7 @@
   const others = usePresence(computed(() => (docId.value ? `document:${docId.value}` : "")));
   let editor: DocEditor | null = null;
 
-  useHead(() => ({ title: `${title.value} — Lumen DMS` }));
+  useHead(() => ({ title: `${title.value}` }));
 
   // ONLYOFFICE serves its own API script; it is loaded once per page.
   const loadScript = (src: string) =>

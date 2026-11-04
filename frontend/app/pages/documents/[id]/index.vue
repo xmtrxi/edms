@@ -26,6 +26,8 @@
   import DocumentRoutingPanel from "@/components/documents/DocumentRoutingPanel.vue";
   import DocumentShareDialog from "@/components/documents/DocumentShareDialog.vue";
   import DocumentVersionHistory from "@/components/documents/DocumentVersionHistory.vue";
+  import Microsoft365Editing from "@/components/documents/Microsoft365Editing.vue";
+  import PdfTools from "@/components/documents/PdfTools.vue";
   import FileTypeIcon from "@/components/FileTypeIcon.vue";
   import EnvelopeCard from "@/components/signing/EnvelopeCard.vue";
   import StatusBadges from "@/components/StatusBadges.vue";
@@ -50,7 +52,7 @@
   });
 
   useHead({
-    title: "Document — Lumen DMS",
+    title: "Document",
   });
 
   const route = useRoute();
@@ -100,6 +102,14 @@
   const requesting = ref(false);
 
   const can = (permission: string) => Boolean(doc.value?.permissions?.includes(permission));
+  const canEditInMicrosoft365 = computed(() =>
+    /\.(docx|docm|xlsx|xlsm|pptx|pptm)$/i.test(doc.value?.name ?? ""),
+  );
+  // PDF tools take PDFs and Office files the server can turn into PDFs.
+  const isPdfCapable = computed(() => {
+    const kind = fileTypeFromMime(doc.value?.mime_type);
+    return kind === "pdf" || kind === "docx" || kind === "xlsx" || kind === "pptx";
+  });
   const sensitivityLabel: Record<string, string> = {
     public: "Public",
     internal: "Internal",
@@ -426,6 +436,16 @@
         >
           <Share2Icon class="h-3.5 w-3.5" /> {{ can("share") ? "Share" : "Who has access" }}
         </Button>
+        <Microsoft365Editing
+          v-if="features?.microsoft365 && can('create_version') && canEditInMicrosoft365"
+          :document-id="doc.id"
+          @changed="load"
+        />
+        <PdfTools
+          v-if="features?.pdf_tools && can('create_version') && isPdfCapable"
+          :document-id="doc.id"
+          @changed="load"
+        />
         <Button v-if="can('sign')" size="sm" variant="outline" class="gap-1.5" as-child>
           <NuxtLink :to="`/documents/${doc.id}/sign`">
             <PenLineIcon class="h-3.5 w-3.5" /> Request signatures
@@ -490,6 +510,7 @@
       </div>
     </div>
 
+    <div id="document-banners" />
     <div
       v-if="suggestedSensitivity && can('share')"
       role="status"
