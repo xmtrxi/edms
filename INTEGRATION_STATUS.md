@@ -1,6 +1,6 @@
 # EDMS integration status
 
-Updated: 2026-09-22
+Updated: 2026-10-26
 
 ## Implemented
 
@@ -20,16 +20,39 @@ Updated: 2026-09-22
 - Surreal Go ORM is updated to commit `b4651f508e9ea4e01e370a57ae88104409b52e91` (`v0.0.0-20260917093316-b4651f508e9e`) and all new schema changes use ORM migrations.
 - New TypeScript/Vue logic uses arrow functions. Go uses idiomatic functions because Go has no arrow-function syntax.
 
-## Deployment-dependent or deliberately unfinished
+## Accounts and security
 
-These are infrastructure or policy integrations, not hidden sample behavior:
+- Sign-ins are revocable sessions: sign out, list devices, sign out elsewhere. Changing or resetting a password signs out other sessions.
+- Password reset and email verification by single-use emailed links; verification can be required (`EDMS_REQUIRE_VERIFIED_EMAIL`).
+- Two-step sign-in with authenticator apps (TOTP) and one-time recovery codes; secrets are encrypted at rest.
+- Single sign-on with any OpenID Connect provider (PKCE, nonce, allowed domains, optional enforcement).
+- Sign-in, reset and verification endpoints are rate limited across instances through Valkey.
+- CORS follows `CORS_ORIGIN`; security headers, request size limits and server timeouts are on; `/metrics` and the task dashboard need monitoring credentials.
 
-1. **Malware scanning and quarantine.** Visitor uploads enforce session ownership and a 20 MB limit, but production should place a scanner/quarantine service in front of final storage.
-2. **Provider delivery callbacks.** SMTP delivery records can be marked delivered, bounced, or failed, but production deployments still need to map their mail provider's signed callback format to that status API.
-3. **Signing provider contract.** The webhook accepts common nested or flat completion payloads and verifies HMAC-SHA256. Confirm the exact event and signature headers emitted by the selected signing deployment before launch.
-4. **AI protocol choice.** The bundled adapter expects HTTP `/chat/completions` and `/embeddings` semantics. Deployments using another protocol implement the small `ai.Provider` interface.
-5. **Scheduled retention.** Staff can permanently delete trashed files and legal holds are enforced. Automatic organization-specific retention schedules still need a policy and scheduler.
-6. **End-to-end infrastructure tests.** Go tests and the Nuxt production build pass. Full automation still needs test instances of SurrealDB, Redis/Valkey, SMTP capture, storage, an AI endpoint, and a signing endpoint.
+## Notifications
+
+In-app inbox with live updates for shares, mentions, access requests and decisions, route steps and outcomes, form approvals and outcomes, signature requests and file-request uploads. "Email notifications", "Workflow digest" (daily summary of routine updates), "AI summaries" and "AI classification" preferences are enforced.
+
+## Documents
+
+- Uploads, new versions, visitor attachments and signed files from Documenso are scanned with ClamAV when `CLAMAV_ADDRESS` is set; infected files are refused and audited.
+- PDF tools via Stirling-PDF: merge, compress, rotate, watermark, page numbers. Jobs are queued with retries and idempotency keys and store exactly one output version.
+- Open in Microsoft 365 when storage is SharePoint: each person edits a working copy, checked in as a new version on demand and hourly.
+
+## Operations
+
+- Email carries proper headers and a Message-ID; Mailgun, Postmark, SendGrid or a generic signed webhook report delivery, bounces and complaints at `/api/email/events/:provider`.
+- Administration → Integrations (self-hosted) shows stuck emails, extractions and PDF jobs, queue depth and dead-letter tasks, and retries them; stuck work is retried hourly.
+- Prometheus metrics, OpenTelemetry tracing, backup/restore scripts and k6 load tests. See the README.
+
+## Still deployment-dependent
+
+1. **Signing provider contract.** Confirm the exact Documenso event and signature headers before launch.
+2. **AI protocol choice.** The bundled adapter expects `/chat/completions` and `/embeddings`; other protocols implement `ai.Provider`.
+3. **Stirling-PDF parameters.** Field names follow the Stirling-PDF v1 API; check them against the deployed version.
+4. **Microsoft 365.** Needs SharePoint storage and a Graph app registration with Files.ReadWrite.All on the site.
+5. **Translations.** The interface is English only.
+6. **Timestamps.** The SurrealDB Go SDK stores times to the second, so records created within the same second have no defined order.
 
 ## Visitor workflow
 
