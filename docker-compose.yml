@@ -4,7 +4,6 @@ services:
       context: ./backend
       args:
         VERSION: ${EDMS_VERSION:-dev}
-    image: edms-api:${EDMS_VERSION:-latest}
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-production}
@@ -133,7 +132,6 @@ services:
   web:
     build:
       context: ./frontend
-    image: edms-web:${EDMS_VERSION:-latest}
     restart: unless-stopped
     environment:
       NUXT_PUBLIC_API_BASE: ${SERVICE_URL_API}/api
