@@ -94,7 +94,7 @@ func (c *Client) ConvertFileAsync(ctx context.Context, filename string, r io.Rea
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 		part, err := writer.CreateFormFile("files", filename)
 		if err == nil {
 			_, err = io.Copy(part, r)
@@ -136,7 +136,7 @@ func (c *Client) ChunkFileAsync(ctx context.Context, filename string, r io.Reade
 	pr, pw := io.Pipe()
 	writer := multipart.NewWriter(pw)
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 		part, err := writer.CreateFormFile("files", filename)
 		if err == nil {
 			_, err = io.Copy(part, r)
@@ -413,7 +413,7 @@ func (c *Client) doRawJSON(req *http.Request, dst any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -470,52 +470,6 @@ func firstString(data map[string]any, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func findString(value any, keys ...string) string {
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range keys {
-			if v, ok := typed[key].(string); ok {
-				return v
-			}
-		}
-		for _, child := range typed {
-			if v := findString(child, keys...); v != "" {
-				return v
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if v := findString(child, keys...); v != "" {
-				return v
-			}
-		}
-	}
-	return ""
-}
-
-func findMap(value any, keys ...string) map[string]any {
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range keys {
-			if v, ok := typed[key].(map[string]any); ok {
-				return v
-			}
-		}
-		for _, child := range typed {
-			if v := findMap(child, keys...); v != nil {
-				return v
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if v := findMap(child, keys...); v != nil {
-				return v
-			}
-		}
-	}
-	return nil
 }
 
 func findInt(value any, keys ...string) int {

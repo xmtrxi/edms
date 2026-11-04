@@ -180,7 +180,7 @@ func (h *VisitorsHandler) uploadAttachment(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusBadRequest, "could not read attachment")
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	name := filepath.Base(file.Filename)
 	item, err := h.visitors.AddAttachment(c.Request().Context(), visitorToken(c), name, file.Header.Get("Content-Type"), file.Size, src)
 	if err != nil {
@@ -201,7 +201,7 @@ func (h *VisitorsHandler) downloadAttachment(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusNotFound, err.Error())
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=\""+strings.ReplaceAll(item.Name, "\"", "")+"\"")
 	return c.Stream(http.StatusOK, item.MimeType, reader)
 }

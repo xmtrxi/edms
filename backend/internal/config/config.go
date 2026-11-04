@@ -466,7 +466,7 @@ func loadDotEnv(filename string) {
 	if err != nil {
 		return // silently ignore if missing
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	scanner := bufio.NewScanner(file)
 
@@ -486,7 +486,7 @@ func loadDotEnv(filename string) {
 		key := strings.TrimSpace(parts[0])
 		value := strings.TrimSpace(parts[1])
 
-		os.Setenv(key, value)
+		_ = os.Setenv(key, value)
 	}
 }
 func getEnv(key string) string {

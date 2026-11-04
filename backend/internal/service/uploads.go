@@ -142,7 +142,7 @@ func (s *UploadService) Append(ctx context.Context, userID, id string, offset in
 	if err != nil {
 		return nil, ErrUploadNotFound
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (s *UploadService) complete(ctx context.Context, userID, id, owner string, 
 	if err != nil {
 		return nil, false, session, ErrUploadNotFound
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if owner == "" {
 		owner = session.UserID
 	}

@@ -344,7 +344,7 @@ func TestWriteFileSizeCountsCopiedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer temp.Close()
+	defer func() { _ = temp.Close() }()
 	w := &writeFile{File: temp, name: "a.txt"}
 	// io.Copy may use the embedded *os.File's ReadFrom; size must still be right.
 	if _, err := io.Copy(w, io.LimitReader(zeroReader{}, 5000)); err != nil {

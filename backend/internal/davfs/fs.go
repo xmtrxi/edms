@@ -330,7 +330,7 @@ func (f *FS) OpenFile(ctx context.Context, name string, flag int, _ os.FileMode)
 	}
 	writing := flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE|os.O_TRUNC) != 0
 	n, err := v.resolve(ctx, name)
-	if err != nil && !(errors.Is(err, os.ErrNotExist) && writing) {
+	if err != nil && (!errors.Is(err, os.ErrNotExist) || !writing) {
 		return nil, err
 	}
 	if n != nil && n.kind != kindDoc {
@@ -415,7 +415,7 @@ func (r *readFile) load() error {
 	if err != nil {
 		return mapError(err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	temp, err := os.CreateTemp("", "edms-dav-read-*")
 	if err != nil {
 		return err
@@ -499,9 +499,9 @@ func (w *writeFile) Readdir(int) ([]fs.FileInfo, error) { return nil, os.ErrInva
 func (w *writeFile) Close() error {
 	defer func() {
 		_ = w.File.Close()
-		_ = os.Remove(w.File.Name())
+		_ = os.Remove(w.Name())
 	}()
-	if _, err := w.File.Seek(0, io.SeekStart); err != nil {
+	if _, err := w.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
 	if w.existing != nil && w.existing.kind == kindDoc {

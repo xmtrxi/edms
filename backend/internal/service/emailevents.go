@@ -251,7 +251,7 @@ func parseGeneric(body []byte) ([]EmailEvent, error) {
 		default:
 			return nil, fmt.Errorf("unknown email status %q", e.Status)
 		}
-		events = append(events, EmailEvent{DeliveryID: e.DeliveryID, MessageID: e.MessageID, Status: e.Status, Detail: e.Detail})
+		events = append(events, EmailEvent(e))
 	}
 	return events, nil
 }

@@ -22,7 +22,7 @@ func TestDeadLetterRoundTrip(t *testing.T) {
 	}
 	queueName := "test-" + time.Now().Format("150405.000000")
 	client := asynq.NewClient(opts)
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	// MaxRetry(0) sends a failing task straight to the dead-letter list.
 	info, err := client.Enqueue(asynq.NewTask("test:fail", []byte(`{"job_id":"x"}`)), asynq.Queue(queueName), asynq.MaxRetry(0))
 	if err != nil {
@@ -40,7 +40,7 @@ func TestDeadLetterRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inspector.Close()
+	defer func() { _ = inspector.Close() }()
 	t.Cleanup(func() { _ = inspector.inner.DeleteQueue(queueName, true) })
 
 	var dead []DeadTask

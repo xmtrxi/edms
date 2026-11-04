@@ -31,7 +31,7 @@ func TestCreateSendsMultipartRequest(t *testing.T) {
 		if err != nil {
 			t.Errorf("form file: %v", err)
 		} else {
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			gotFileName = header.Filename
 			data, _ := io.ReadAll(file)
 			gotFile = string(data)
@@ -209,7 +209,7 @@ func TestDownloadCompletedDefaultURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DownloadCompleted: %v", err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	data, _ := io.ReadAll(body)
 	if string(data) != "signed pdf" {
 		t.Fatalf("unexpected body %q", data)

@@ -246,7 +246,7 @@ func (s *ESignService) Create(ctx context.Context, userID, documentID string, in
 	if err != nil {
 		return nil, fmt.Errorf("this file can't be prepared for signing: %w", err)
 	}
-	defer rendition.Body.Close()
+	defer func() { _ = rendition.Body.Close() }()
 	if rendition.Kind != PreviewPDF {
 		return nil, errors.New("only PDFs and Office documents can be signed")
 	}
@@ -1241,7 +1241,7 @@ func (s *ESignService) read(ctx context.Context, storagePath string, limit int64
 	if err != nil {
 		return nil, err
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	return io.ReadAll(io.LimitReader(body, limit))
 }
 

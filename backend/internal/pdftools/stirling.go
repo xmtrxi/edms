@@ -183,7 +183,7 @@ func (c *Client) Run(ctx context.Context, op string, inputs []Input, opts Option
 	if err != nil {
 		return nil, fmt.Errorf("stirling-pdf %s: %w", op, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	out, err := io.ReadAll(io.LimitReader(resp.Body, 1<<30))
 	if err != nil {
 		return nil, err
@@ -210,7 +210,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode >= 500 {
 		return fmt.Errorf("stirling-pdf status %d", resp.StatusCode)
 	}

@@ -56,7 +56,7 @@ func (c *Client) ConvertOfficeToPDF(ctx context.Context, filename string, r io.R
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	payload, err := io.ReadAll(resp.Body)
 	if err != nil {

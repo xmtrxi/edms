@@ -124,7 +124,7 @@ func (p *HTTPCompatibleProvider) post(ctx context.Context, path string, payload 
 	if err != nil {
 		return err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return fmt.Errorf("AI request failed (%d): %s", response.StatusCode, strings.TrimSpace(string(message)))

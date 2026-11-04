@@ -243,7 +243,7 @@ func (s *VersionService) Restore(ctx context.Context, ownerID, documentID, versi
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	next := doc.VersionCount + 1
 	if next < 2 {
 		next = 2

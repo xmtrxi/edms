@@ -187,7 +187,7 @@ func (s *LabelService) text(ctx context.Context, documentID string) string {
 	extraction := extractions[0]
 	if path := metadataString(extraction.Metadata, "full_text_path", ""); path != "" && s.storage != nil {
 		if reader, err := s.storage.Download(ctx, path); err == nil {
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 			if body, err := io.ReadAll(io.LimitReader(reader, maxLabelText)); err == nil && len(body) > 0 {
 				return string(body)
 			}

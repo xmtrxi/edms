@@ -267,7 +267,7 @@ func (h *DocumentsHandler) upload(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusBadRequest, "could not read uploaded file")
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	name := strings.TrimSpace(c.FormValue("name"))
 	if name == "" {
@@ -586,7 +586,7 @@ func (h *DocumentsHandler) download(c *echo.Context) error {
 	if err != nil {
 		return h.handleError(c, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	c.Response().Header().Set(echo.HeaderContentType, doc.MimeType)
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=\""+strings.ReplaceAll(doc.Name, "\"", "")+"\"")
@@ -618,7 +618,7 @@ func (h *DocumentsHandler) preview(c *echo.Context) error {
 		}
 		return h.handleError(c, err)
 	}
-	defer preview.Body.Close()
+	defer func() { _ = preview.Body.Close() }()
 	header := c.Response().Header()
 	header.Set("X-Preview-Kind", preview.Kind)
 	header.Set("Cache-Control", "private, no-store")
@@ -655,7 +655,7 @@ func (h *DocumentsHandler) sign(c *echo.Context) error {
 	if err != nil {
 		return h.handleError(c, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	title := strings.TrimSpace(input.Title)
 	if title == "" {
 		title = document.Name

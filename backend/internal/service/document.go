@@ -458,7 +458,7 @@ func (s *DocumentService) readOCRArtifact(ctx context.Context, path string) (str
 	if err != nil {
 		return "", fmt.Errorf("download OCR artifact: %w", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	contents, err := io.ReadAll(reader)
 	if err != nil {
 		return "", fmt.Errorf("read OCR artifact: %w", err)

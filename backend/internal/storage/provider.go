@@ -36,10 +36,7 @@ func NewProvider(ctx context.Context, cfg config.Config) (Provider, error) {
 
 	case "s3":
 		awsConfig := aws.Config{
-			Region: cfg.S3.Region,
-			EndpointResolver: aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
-				return aws.Endpoint{URL: cfg.S3.Endpoint}, nil
-			}),
+			Region:      cfg.S3.Region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(cfg.S3.AccessKeyID, cfg.S3.SecretAccessKey, "")),
 		}
 

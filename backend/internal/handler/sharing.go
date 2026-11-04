@@ -265,7 +265,7 @@ func (h *SharingHandler) downloadLink(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusBadGateway, "file is not available")
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	disposition := "attachment"
 	if inline {
 		disposition = "inline"

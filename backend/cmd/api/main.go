@@ -67,7 +67,7 @@ func main() {
 		logger.Error("connect database", "error", err)
 		os.Exit(1)
 	}
-	defer db.Close(ctx)
+	defer func() { _ = db.Close(ctx) }()
 
 	if err := database.AutoMigrate(ctx, db, migrations.Migrations()); err != nil {
 		// Migrations are now idempotent (IF NOT EXISTS + already-exists swallow),
@@ -99,7 +99,7 @@ func main() {
 			logger.Error("connect cache", "error", err)
 			os.Exit(1)
 		}
-		defer cacheClient.Close()
+		defer func() { _ = cacheClient.Close() }()
 	}
 
 	var queueClient *queue.Client
@@ -109,7 +109,7 @@ func main() {
 			logger.Error("connect queue", "error", err)
 			os.Exit(1)
 		}
-		defer queueClient.Close()
+		defer func() { _ = queueClient.Close() }()
 	}
 
 	var doclingClient *docling.Client
@@ -235,7 +235,7 @@ func healthcheck() int {
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}

@@ -54,7 +54,7 @@ func (h *EditorHandler) file(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusForbidden, "invalid or expired link")
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename*=UTF-8''"+url.PathEscape(name))
 	c.Response().Header().Set(echo.HeaderContentType, "application/octet-stream")
 	c.Response().WriteHeader(http.StatusOK)

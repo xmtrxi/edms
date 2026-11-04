@@ -61,7 +61,7 @@ func (h *VersionsHandler) download(c *echo.Context) error {
 	if err != nil {
 		return h.handleError(c, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	c.Response().Header().Set(echo.HeaderContentDisposition, "attachment; filename=\""+strings.ReplaceAll(version.FileName, "\"", "")+"\"")
 	return c.Stream(http.StatusOK, version.MimeType, reader)
 }
@@ -103,7 +103,7 @@ func (h *VersionsHandler) upload(c *echo.Context) error {
 	if err != nil {
 		return respondError(c, http.StatusBadRequest, "could not read uploaded file")
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	version, created, err := h.versions.AddVersion(c.Request().Context(), string(middleware.CurrentUser(c).ID), c.Param("id"), service.NewVersionInput{
 		File: src, FileName: file.Filename, MimeType: file.Header.Get("Content-Type"), Summary: c.FormValue("summary"),
 	})

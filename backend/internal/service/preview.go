@@ -124,7 +124,7 @@ func (s *PreviewService) Rendition(ctx context.Context, doc *database.Document) 
 	if err != nil {
 		return nil, fmt.Errorf("open file: %w", err)
 	}
-	defer original.Close()
+	defer func() { _ = original.Close() }()
 	pdf, err := s.office.ConvertOfficeToPDF(ctx, doc.Name, original)
 	if err != nil {
 		return nil, fmt.Errorf("convert for preview: %w", err)

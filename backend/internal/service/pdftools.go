@@ -219,7 +219,7 @@ func (s *PDFService) run(ctx context.Context, job *database.PDFJob) error {
 			return fmt.Errorf("prepare %s: %w", doc.Name, err)
 		}
 		body, err := io.ReadAll(io.LimitReader(rendition.Body, maxPDFInput+1))
-		rendition.Body.Close()
+		_ = rendition.Body.Close()
 		if err != nil {
 			return err
 		}

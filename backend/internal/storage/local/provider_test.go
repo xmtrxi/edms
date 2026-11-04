@@ -23,7 +23,7 @@ func read(t *testing.T, p *LocalProvider, path string) string {
 	if err != nil {
 		t.Fatalf("Download(%q): %v", path, err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	data, err := io.ReadAll(body)
 	if err != nil {
 		t.Fatalf("read %q: %v", path, err)

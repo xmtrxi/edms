@@ -21,7 +21,7 @@ func fakeClamd(t *testing.T, reply func(body []byte) string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -29,14 +29,14 @@ func fakeClamd(t *testing.T, reply func(body []byte) string) string {
 				return
 			}
 			go func(conn net.Conn) {
-				defer conn.Close()
+				defer func() { _ = conn.Close() }()
 				r := bufio.NewReader(conn)
 				cmd, err := r.ReadString(0)
 				if err != nil {
 					return
 				}
 				if cmd == "zPING\x00" {
-					conn.Write([]byte("PONG\x00"))
+					_, _ = conn.Write([]byte("PONG\x00"))
 					return
 				}
 				var body bytes.Buffer
@@ -53,7 +53,7 @@ func fakeClamd(t *testing.T, reply func(body []byte) string) string {
 						return
 					}
 				}
-				conn.Write([]byte(reply(body.Bytes()) + "\x00"))
+				_, _ = conn.Write([]byte(reply(body.Bytes()) + "\x00"))
 			}(conn)
 		}
 	}()

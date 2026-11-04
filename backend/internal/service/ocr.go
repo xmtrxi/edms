@@ -103,7 +103,7 @@ func (s *OCRService) ProcessOCR(ctx context.Context, documentID, storagePath, ve
 		s.failDocument(ctx, doc, jobID, versionID, fmt.Errorf("download original: %w", err))
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	filename := doc.OriginalName
 	input := io.Reader(file)

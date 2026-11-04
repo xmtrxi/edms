@@ -47,7 +47,7 @@ func (s *SigningService) Complete(ctx context.Context, providerDocumentID, downl
 	if err != nil {
 		return nil, fmt.Errorf("download completed document: %w", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	temp, err := os.CreateTemp("", "edms-signed-*")
 	if err != nil {
 		return nil, fmt.Errorf("buffer signed document: %w", err)

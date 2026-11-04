@@ -62,7 +62,7 @@ func (h *RealtimeHandler) connect(c *echo.Context) error {
 	if err != nil {
 		return nil
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	user := middleware.CurrentUser(c)
 	userID := string(user.ID)

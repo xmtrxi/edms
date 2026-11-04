@@ -26,7 +26,7 @@ func TestRunSendsFilesAndFields(t *testing.T) {
 		for _, fh := range r.MultipartForm.File["fileInput"] {
 			gotFiles = append(gotFiles, fh.Filename)
 		}
-		io.WriteString(w, "%PDF-1.7 merged")
+		_, _ = io.WriteString(w, "%PDF-1.7 merged")
 	}))
 	defer srv.Close()
 
@@ -49,7 +49,7 @@ func TestRunRejectsBadOptionsAndResponses(t *testing.T) {
 			http.Error(w, "boom", http.StatusBadGateway)
 			return
 		}
-		io.WriteString(w, "<html>login</html>")
+		_, _ = io.WriteString(w, "<html>login</html>")
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "", 0)

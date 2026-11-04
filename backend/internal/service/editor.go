@@ -237,7 +237,7 @@ func (s *EditorService) download(ctx context.Context, raw string) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("download edited file: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download edited file: %s", res.Status)
 	}

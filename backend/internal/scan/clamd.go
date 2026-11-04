@@ -63,7 +63,7 @@ func (c *Clamd) Ping(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := conn.Write([]byte("zPING\x00")); err != nil {
 		return err
@@ -84,7 +84,7 @@ func (c *Clamd) Scan(ctx context.Context, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	deadline := time.Now().Add(c.Timeout)
 	if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
 		deadline = d

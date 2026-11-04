@@ -243,7 +243,7 @@ func (s *SearchService) chunksForIndex(ctx context.Context, doc *database.Docume
 	if path != "" && s.storage != nil {
 		reader, err := s.storage.Download(ctx, path)
 		if err == nil {
-			defer reader.Close()
+			defer func() { _ = reader.Close() }()
 			decoder := json.NewDecoder(reader)
 			chunks := []search.DocumentChunk{}
 			for {
@@ -315,7 +315,7 @@ func (s *SearchService) readStorageText(ctx context.Context, path string, limit 
 	if err != nil {
 		return "", err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	payload, err := io.ReadAll(io.LimitReader(reader, int64(limit)))
 	if err != nil {
 		return "", err

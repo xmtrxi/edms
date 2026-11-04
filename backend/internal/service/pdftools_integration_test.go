@@ -25,7 +25,7 @@ func TestPDFJobStoresExactlyOneVersion(t *testing.T) {
 	var calls atomic.Int32
 	stirling := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		io.WriteString(w, "%PDF-1.7 rotated")
+		_, _ = io.WriteString(w, "%PDF-1.7 rotated")
 	}))
 	defer stirling.Close()
 

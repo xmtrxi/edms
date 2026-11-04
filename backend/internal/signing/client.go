@@ -83,7 +83,7 @@ func (c *DocumensoClient) Create(ctx context.Context, input CreateRequest) (*Cre
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return nil, fmt.Errorf("documenso create failed (%d): %s", response.StatusCode, strings.TrimSpace(string(message)))
@@ -143,7 +143,7 @@ func (c *DocumensoClient) DownloadCompleted(ctx context.Context, documentID, dow
 		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
 		return nil, fmt.Errorf("documenso download failed (%d): %s", response.StatusCode, strings.TrimSpace(string(message)))
 	}

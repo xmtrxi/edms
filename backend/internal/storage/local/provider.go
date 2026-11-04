@@ -39,9 +39,11 @@ func (s *LocalProvider) Upload(ctx context.Context, path string, file io.Reader)
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
-	_, err = io.Copy(dst, file)
-	return err
+	if _, err := io.Copy(dst, file); err != nil {
+		_ = dst.Close()
+		return err
+	}
+	return dst.Close()
 }
 
 func (s *LocalProvider) Download(ctx context.Context, path string) (io.ReadCloser, error) {

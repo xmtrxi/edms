@@ -22,7 +22,7 @@ import (
 
 var (
 	ErrM365Unavailable  = errors.New("opening in Microsoft 365 needs SharePoint storage")
-	ErrM365Format       = errors.New("Microsoft 365 for the web can edit Word, Excel and PowerPoint files")
+	ErrM365Format       = errors.New("Microsoft 365 for the web can edit Word, Excel and PowerPoint files") //nolint:staticcheck // starts with a product name
 	ErrM365NoSession    = errors.New("this document isn't open in Microsoft 365")
 	m365EditableFormats = map[string]bool{"docx": true, "docm": true, "xlsx": true, "xlsm": true, "pptx": true, "pptm": true}
 )
@@ -90,7 +90,7 @@ func (s *Microsoft365Service) Open(ctx context.Context, userID, documentID strin
 	if err != nil {
 		return nil, err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	_, docKey, _ := strings.Cut(documentID, ":")
 	_, userKey, _ := strings.Cut(userID, ":")
@@ -135,7 +135,7 @@ func (s *Microsoft365Service) checkIn(ctx context.Context, session *database.M36
 	if err != nil {
 		return nil, fmt.Errorf("read working copy: %w", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	temp, err := os.CreateTemp("", "edms-m365-*")
 	if err != nil {
 		return nil, err

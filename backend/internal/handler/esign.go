@@ -142,7 +142,7 @@ func (h *ESignHandler) document(c *echo.Context) error {
 	if err != nil {
 		return esignError(c, err)
 	}
-	defer body.Close()
+	defer func() { _ = body.Close() }()
 	disposition := "inline"
 	if c.QueryParam("download") != "" {
 		disposition = "attachment"
