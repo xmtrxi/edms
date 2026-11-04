@@ -11,6 +11,7 @@
   import { computed, onMounted, ref } from "vue";
   import { toast } from "vue-sonner";
 
+  import AuthShowcase from "@/components/auth/AuthShowcase.vue";
   import { Button } from "@/components/ui/button";
   import { Input } from "@/components/ui/input";
   import { Label } from "@/components/ui/label";
@@ -20,7 +21,7 @@
   });
 
   useHead({
-    title: "Create account — Lumen DMS",
+    title: "Create account",
   });
 
   const auth = useAuthStore();
@@ -53,37 +54,26 @@
       toast.error(auth.error || "Could not create account");
       return;
     }
+    if (registered === "unverified") {
+      navigateTo({ path: "/auth/verify-email", query: { sent: form.value.email.trim() } });
+      return;
+    }
     toast.success(`Welcome, ${auth.user?.name ?? ""}`);
     navigateTo("/");
   };
+
+  const brand = useBrand();
 </script>
 
 <template>
   <div class="bg-background flex min-h-dvh">
-    <div
-      class="from-primary/5 via-primary/[0.02] to-background relative hidden flex-1 items-center justify-center overflow-hidden bg-gradient-to-br lg:flex"
-    >
-      <div
-        class="from-primary/10 absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] via-transparent to-transparent"
-      />
-      <div class="relative max-w-md px-8 text-center">
-        <div
-          class="bg-primary/10 text-primary ring-primary/20 mx-auto mb-6 grid h-20 w-20 place-items-center rounded-2xl ring-1"
-        >
-          <FileTextIcon class="h-10 w-10" />
-        </div>
-        <h2 class="text-3xl font-bold tracking-tight">Lumen DMS</h2>
-        <p class="text-muted-foreground mt-3 leading-relaxed">
-          One workspace for capturing, classifying, routing, and retrieving your documents.
-        </p>
-      </div>
-    </div>
+    <AuthShowcase />
 
     <div class="flex flex-1 items-center justify-center p-6">
       <div class="w-full max-w-sm">
         <div class="mb-8 text-center lg:text-left">
           <div class="mb-2 inline-flex items-center gap-2 text-lg font-semibold lg:hidden">
-            <FileTextIcon class="text-primary h-5 w-5" /> Lumen
+            <FileTextIcon class="text-primary h-5 w-5" /> {{ brand }}
           </div>
           <h1 class="text-2xl font-bold tracking-tight">Create account</h1>
           <p class="text-muted-foreground mt-1 text-sm">

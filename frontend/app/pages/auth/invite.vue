@@ -10,7 +10,7 @@
   import { getToken } from "@/utils/token";
 
   definePageMeta({ layout: "auth" });
-  useHead({ title: "Join organization — Lumen DMS" });
+  useHead({ title: "Join organization" });
 
   const route = useRoute();
   const auth = useAuthStore();
@@ -68,8 +68,8 @@
     }
   };
 
-  const signInFirst = () => {
-    auth.logout();
+  const signInFirst = async () => {
+    await auth.logout();
     navigateTo({ path: "/auth/login", query: { redirect: route.fullPath } });
   };
 </script>

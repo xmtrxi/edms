@@ -2,8 +2,11 @@ import type {
   ApiResponse,
   AuthResponse,
   DeploymentMeta,
+  AccountSession,
   InvitationPreview,
+  LoginOutcome,
   LoginRequest,
+  MFASetup,
   Organization,
   RegisterRequest,
   SessionResponse,
@@ -11,7 +14,7 @@ import type {
   User,
 } from "@/types/api";
 import { apiErrorMessage } from "@/utils/api";
-import { clearToken, setToken } from "@/utils/token";
+import { clearToken, getToken, setToken } from "@/utils/token";
 
 export const authService = () => {
   const user = ref<User | null>(null);
@@ -45,7 +48,10 @@ export const authService = () => {
     return meta.value;
   };
 
-  const login = async (credentials: LoginRequest): Promise<boolean> => {
+  /** Pending two-step sign-in, kept only in memory. */
+  const mfaToken = ref("");
+
+  const login = async (credentials: LoginRequest): Promise<LoginOutcome> => {
     const { $api } = useNuxtApp();
     loading.value = true;
     error.value = "";
@@ -54,6 +60,32 @@ export const authService = () => {
         method: "POST",
         body: credentials,
       });
+      if (res.data.mfa_required && res.data.mfa_token) {
+        mfaToken.value = res.data.mfa_token;
+        return "mfa";
+      }
+      applyAuth(res.data);
+      return "signed-in";
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      const body = (err as { response?: { _data?: { code?: string } } }).response?._data;
+      return body?.code === "email_not_verified" ? "unverified" : "failed";
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  /** Second step: a code from the authenticator app or a recovery code. */
+  const completeMfa = async (code: string): Promise<boolean> => {
+    const { $api } = useNuxtApp();
+    loading.value = true;
+    error.value = "";
+    try {
+      const res = await $api<ApiResponse<AuthResponse>>("/auth/login/mfa", {
+        method: "POST",
+        body: { mfa_token: mfaToken.value, code },
+      });
+      mfaToken.value = "";
       applyAuth(res.data);
       return true;
     } catch (err) {
@@ -64,8 +96,109 @@ export const authService = () => {
     }
   };
 
-  /** Creates the account and signs in; the server returns a session token. */
-  const register = async (payload: RegisterRequest): Promise<boolean> => {
+  /** Token handed back by single sign-on in the URL fragment. */
+  const acceptSsoToken = async (token: string): Promise<boolean> => {
+    setToken(token);
+    return fetchSession();
+  };
+
+  /** Where the browser goes to start single sign-on. */
+  const ssoStartUrl = (returnTo = "/"): string => {
+    const { apiBase } = useRuntimeConfig().public;
+    return `${apiBase}/auth/sso/start?return=${encodeURIComponent(returnTo)}`;
+  };
+
+  /** Runs a request and keeps its error message; returns null on failure. */
+  const call = async <T>(
+    path: string,
+    options: Parameters<typeof $fetch>[1] = {},
+  ): Promise<T | null> => {
+    const { $api } = useNuxtApp();
+    error.value = "";
+    try {
+      return (await $api<T>(path, options as never)) as T;
+    } catch (err) {
+      error.value = apiErrorMessage(err);
+      return null;
+    }
+  };
+
+  const requestPasswordReset = async (email: string): Promise<boolean> =>
+    (await call("/auth/password/forgot", { method: "POST", body: { email } })) !== null;
+
+  const resetPassword = async (token: string, password: string): Promise<boolean> =>
+    (await call("/auth/password/reset", { method: "POST", body: { token, password } })) !== null;
+
+  const verifyEmail = async (token: string): Promise<boolean> => {
+    const res = await call<ApiResponse<User>>("/auth/email/verify", {
+      method: "POST",
+      body: { token },
+    });
+    if (res && user.value) user.value = res.data;
+    return res !== null;
+  };
+
+  const resendVerification = async (email: string): Promise<boolean> =>
+    (await call("/auth/email/resend", { method: "POST", body: { email } })) !== null;
+
+  const sendVerification = async (): Promise<boolean> =>
+    (await call("/auth/email/send-verification", { method: "POST" })) !== null;
+
+  const updateProfile = async (name: string): Promise<boolean> => {
+    const res = await call<ApiResponse<User>>("/auth/me", { method: "PATCH", body: { name } });
+    if (res) user.value = res.data;
+    return res !== null;
+  };
+
+  const changePassword = async (currentPassword: string, newPassword: string): Promise<boolean> =>
+    (await call("/auth/password", {
+      method: "POST",
+      body: { current_password: currentPassword, new_password: newPassword },
+    })) !== null;
+
+  const listSessions = async (): Promise<AccountSession[]> =>
+    (await call<ApiResponse<AccountSession[]>>("/auth/sessions"))?.data ?? [];
+
+  const revokeSession = async (id: string): Promise<boolean> =>
+    (await call(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })) !== null;
+
+  const revokeOtherSessions = async (): Promise<boolean> =>
+    (await call("/auth/sessions/revoke-others", { method: "POST" })) !== null;
+
+  const beginMfa = async (): Promise<MFASetup | null> =>
+    (await call<ApiResponse<MFASetup>>("/auth/mfa/setup", { method: "POST" }))?.data ?? null;
+
+  const enableMfa = async (code: string): Promise<string[] | null> => {
+    const res = await call<ApiResponse<{ recovery_codes: string[] }>>("/auth/mfa/enable", {
+      method: "POST",
+      body: { code },
+    });
+    if (res && user.value) user.value = { ...user.value, mfa_enabled: true };
+    return res?.data.recovery_codes ?? null;
+  };
+
+  const disableMfa = async (password: string, code: string): Promise<boolean> => {
+    const ok =
+      (await call("/auth/mfa/disable", { method: "POST", body: { password, code } })) !== null;
+    if (ok && user.value) user.value = { ...user.value, mfa_enabled: false };
+    return ok;
+  };
+
+  const regenerateRecoveryCodes = async (code: string): Promise<string[] | null> =>
+    (
+      await call<ApiResponse<{ recovery_codes: string[] }>>("/auth/mfa/recovery-codes", {
+        method: "POST",
+        body: { code },
+      })
+    )?.data.recovery_codes ?? null;
+
+  /**
+   * Creates the account and signs in. Returns "unverified" when the account
+   * must confirm its email address first.
+   */
+  const register = async (
+    payload: RegisterRequest,
+  ): Promise<"signed-in" | "unverified" | false> => {
     const { $api } = useNuxtApp();
     loading.value = true;
     error.value = "";
@@ -74,8 +207,9 @@ export const authService = () => {
         method: "POST",
         body: payload,
       });
+      if (res.data.verification_required) return "unverified";
       applyAuth(res.data);
-      return true;
+      return "signed-in";
     } catch (err) {
       error.value = apiErrorMessage(err);
       return false;
@@ -205,7 +339,12 @@ export const authService = () => {
     }
   };
 
-  const logout = (): void => {
+  /** Ends the session on the server too, so the token stops working. */
+  const logout = async (): Promise<void> => {
+    if (getToken()) {
+      const { $api } = useNuxtApp();
+      await $api("/auth/logout", { method: "POST" }).catch(() => undefined);
+    }
     clearToken();
     user.value = null;
     organization.value = null;
@@ -225,6 +364,23 @@ export const authService = () => {
     canCreateOrganization,
     fetchMeta,
     login,
+    completeMfa,
+    acceptSsoToken,
+    ssoStartUrl,
+    requestPasswordReset,
+    resetPassword,
+    verifyEmail,
+    resendVerification,
+    sendVerification,
+    updateProfile,
+    changePassword,
+    listSessions,
+    revokeSession,
+    revokeOtherSessions,
+    beginMfa,
+    enableMfa,
+    disableMfa,
+    regenerateRecoveryCodes,
     register,
     fetchSession,
     switchOrganization,
