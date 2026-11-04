@@ -1,17 +1,3 @@
-# EDMS with its document services. SurrealDB, Redis/Valkey and Meilisearch
-# are not here: point backend/.env at the ones already on the server.
-#
-#   cp .env.compose.example .env      # public URLs and secrets for compose
-#   cp backend/.env.example backend/.env   # API settings (SurrealDB, Redis...)
-#   docker compose up -d --build
-#
-# Services on the host itself are reachable from containers as
-# host.docker.internal, e.g. SURREALDB_URL=ws://host.docker.internal:8000/rpc.
-
-x-host-gateway: &host-gateway
-  extra_hosts:
-    - "host.docker.internal:host-gateway"
-
 services:
   api:
     build:
@@ -20,28 +6,124 @@ services:
         VERSION: ${EDMS_VERSION:-dev}
     image: edms-api:${EDMS_VERSION:-latest}
     restart: unless-stopped
-    env_file:
-      - backend/.env
     environment:
+      APP_ENV: ${APP_ENV:-production}
       APP_PORT: "8080"
-      APP_URL: ${PUBLIC_WEB_URL:?set PUBLIC_WEB_URL}
-      CORS_ORIGIN: ${PUBLIC_WEB_URL}
-      # Document services on the compose network.
+      APP_NAME: ${APP_NAME:-Lumen DMS}
+      APP_URL: ${SERVICE_URL_WEB}
+      CORS_ORIGIN: ${SERVICE_URL_WEB}
+      JWT_SECRET: ${SERVICE_PASSWORD_64_JWT}
+      ENCRYPTION_KEY: ${SERVICE_PASSWORD_64_ENCRYPTION}
+      SESSION_TTL: ${SESSION_TTL:-72h}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+
+      EDMS_MODE: ${EDMS_MODE:-selfhosted}
+      EDMS_SIGNUP: ${EDMS_SIGNUP:-}
+      EDMS_ORG_NAME: ${EDMS_ORG_NAME:?}
+      EDMS_ADMIN_EMAIL: ${EDMS_ADMIN_EMAIL:?}
+      EDMS_PERSONAL_WORKSPACES: ${EDMS_PERSONAL_WORKSPACES:-false}
+      EDMS_MULTI_ORG: ${EDMS_MULTI_ORG:-false}
+      EDMS_REQUIRE_VERIFIED_EMAIL: ${EDMS_REQUIRE_VERIFIED_EMAIL:-}
+
+      BODY_LIMIT_MB: ${BODY_LIMIT_MB:-25}
+      UPLOAD_MAX_MB: ${UPLOAD_MAX_MB:-10240}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-10}
+      LOGIN_WINDOW: ${LOGIN_WINDOW:-15m}
+      MONITORING_USER: ${MONITORING_USER:-}
+      MONITORING_PASSWORD: ${MONITORING_PASSWORD:-}
+
+      SURREALDB_URL: ${SURREALDB_URL:?}
+      SURREALDB_NAMESPACE: ${SURREALDB_NAMESPACE:-edms}
+      SURREALDB_DATABASE: ${SURREALDB_DATABASE:-edms}
+      SURREALDB_USER: ${SURREALDB_USER:?}
+      SURREALDB_PASS: ${SURREALDB_PASS:?}
+
+      REDIS_URL: ${REDIS_URL:?}
+      VALKEY_URL: ${VALKEY_URL:-}
+      QUEUE_CONCURRENCY: ${QUEUE_CONCURRENCY:-10}
+
+      MEILI_URL: ${MEILI_URL:-}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-}
+      MEILI_INDEX: ${MEILI_INDEX:-documents}
+
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      LOCAL_STORAGE_PATH: /data/storage
+      S3_REGION: ${S3_REGION:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+
+      SHAREPOINT_SITE_URL: ${SHAREPOINT_SITE_URL:-}
+      SHAREPOINT_SITE_ID: ${SHAREPOINT_SITE_ID:-}
+      SHAREPOINT_TENANT_ID: ${SHAREPOINT_TENANT_ID:-}
+      SHAREPOINT_CLIENT_ID: ${SHAREPOINT_CLIENT_ID:-}
+      SHAREPOINT_CLIENT_SECRET: ${SHAREPOINT_CLIENT_SECRET:-}
+      SHAREPOINT_DRIVE_ID: ${SHAREPOINT_DRIVE_ID:-}
+      SHAREPOINT_FOLDER: ${SHAREPOINT_FOLDER:-}
+
+      OCR_PROVIDER: ${OCR_PROVIDER:-docling}
       DOCLING_BASE_URL: http://docling:5001
-      DOCLING_API_KEY: ${DOCLING_API_KEY:-}
+      DOCLING_API_KEY: ${SERVICE_PASSWORD_DOCLING}
+      DOCLING_TIMEOUT: ${DOCLING_TIMEOUT:-600s}
       GOTENBERG_BASE_URL: http://gotenberg:3000
       STIRLING_PDF_URL: http://stirling-pdf:8080
-      # Browsers load ONLYOFFICE from its public URL; ONLYOFFICE and the API
-      # talk to each other inside the network.
-      ONLYOFFICE_URL: ${PUBLIC_ONLYOFFICE_URL:?set PUBLIC_ONLYOFFICE_URL}
+      STIRLING_PDF_API_KEY: ${STIRLING_PDF_API_KEY:-}
+      STIRLING_PDF_TIMEOUT: ${STIRLING_PDF_TIMEOUT:-5m}
+
+      ONLYOFFICE_URL: ${SERVICE_URL_ONLYOFFICE}
       ONLYOFFICE_INTERNAL_URL: http://onlyoffice
       ONLYOFFICE_API_URL: http://api:8080/api
-      ONLYOFFICE_JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:?set ONLYOFFICE_JWT_SECRET}
-    ports:
-      - "${API_PORT:-8080}:8080"
+      ONLYOFFICE_JWT_SECRET: ${SERVICE_PASSWORD_64_ONLYOFFICE}
+
+      ESIGN_SEAL_CERT_FILE: ${ESIGN_SEAL_CERT_FILE:-}
+      ESIGN_SEAL_KEY_FILE: ${ESIGN_SEAL_KEY_FILE:-}
+      ESIGN_SEAL_NAME: ${ESIGN_SEAL_NAME:-Lumen DMS}
+      ESIGN_TSA_URL: ${ESIGN_TSA_URL:-}
+      SIGNING_ENABLED: ${SIGNING_ENABLED:-false}
+      SIGNING_PROVIDER: ${SIGNING_PROVIDER:-documenso}
+      DOCUMENSO_BASE_URL: ${DOCUMENSO_BASE_URL:-}
+      DOCUMENSO_API_KEY: ${DOCUMENSO_API_KEY:-}
+
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_CHAT_MODEL: ${AI_CHAT_MODEL:-}
+      AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-}
+
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      EMAIL_EVENTS_PROVIDER: ${EMAIL_EVENTS_PROVIDER:-}
+      EMAIL_EVENTS_SECRET: ${EMAIL_EVENTS_SECRET:-}
+      EMAIL_EVENTS_USER: ${EMAIL_EVENTS_USER:-}
+      EMAIL_EVENTS_PUBLIC_KEY: ${EMAIL_EVENTS_PUBLIC_KEY:-}
+
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URL: ${OIDC_REDIRECT_URL:-}
+      OIDC_LABEL: ${OIDC_LABEL:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid,email,profile}
+      OIDC_EMAIL_CLAIM: ${OIDC_EMAIL_CLAIM:-email}
+      OIDC_ALLOWED_DOMAINS: ${OIDC_ALLOWED_DOMAINS:-}
+      OIDC_AUTO_PROVISION: ${OIDC_AUTO_PROVISION:-true}
+      OIDC_ENFORCE: ${OIDC_ENFORCE:-false}
+
+      CLAMAV_ADDRESS: ${CLAMAV_ADDRESS:-}
+      CLAMAV_REQUIRED: ${CLAMAV_REQUIRED:-false}
+      CLAMAV_TIMEOUT: ${CLAMAV_TIMEOUT:-2m}
+
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-edms-api}
+    expose:
+      - 8080
     volumes:
       - edms-data:/data
-    <<: *host-gateway
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       gotenberg:
         condition: service_started
@@ -54,52 +136,49 @@ services:
     image: edms-web:${EDMS_VERSION:-latest}
     restart: unless-stopped
     environment:
-      NUXT_PUBLIC_API_BASE: ${PUBLIC_API_URL:?set PUBLIC_API_URL}
-    ports:
-      - "${WEB_PORT:-3000}:3000"
+      NUXT_PUBLIC_API_BASE: ${SERVICE_URL_API}/api
+      NUXT_PUBLIC_APP_NAME: ${APP_NAME:-Lumen DMS}
+    expose:
+      - 3000
     depends_on:
       - api
 
-  # Text extraction and OCR. Models load at start, so the first boot is slow.
   docling:
     image: ghcr.io/docling-project/docling-serve-cpu:latest
     restart: unless-stopped
     environment:
-      DOCLING_SERVE_API_KEY: ${DOCLING_API_KEY:-}
+      DOCLING_SERVE_API_KEY: ${SERVICE_PASSWORD_DOCLING}
       DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "true"
-      DOCLING_SERVE_MAX_FILE_SIZE: "104857600"
-      DOCLING_SERVE_MAX_NUM_PAGES: "200"
-      DOCLING_SERVE_DOCUMENT_TIMEOUT: "600"
+      DOCLING_SERVE_MAX_FILE_SIZE: ${DOCLING_SERVE_MAX_FILE_SIZE:-104857600}
+      DOCLING_SERVE_MAX_NUM_PAGES: ${DOCLING_SERVE_MAX_NUM_PAGES:-200}
+      DOCLING_SERVE_DOCUMENT_TIMEOUT: ${DOCLING_SERVE_DOCUMENT_TIMEOUT:-600}
+    expose:
+      - 5001
 
-  # Office to PDF conversion for previews, signing and PDF tools.
   gotenberg:
     image: gotenberg/gotenberg:8
     restart: unless-stopped
     command: ["gotenberg", "--api-port=3000"]
 
-  # PDF tools. Only the API calls it, so it is not published.
   stirling-pdf:
     image: stirlingtools/stirling-pdf:latest
     restart: unless-stopped
     environment:
       DOCKER_ENABLE_SECURITY: "false"
-      SYSTEM_DEFAULTLOCALE: en-GB
+      SYSTEM_DEFAULTLOCALE: ${STIRLING_LOCALE:-en-GB}
     volumes:
       - stirling-configs:/configs
 
-  # Editing in the browser. Browsers load it, so it is published.
   onlyoffice:
     image: onlyoffice/documentserver:latest
     restart: unless-stopped
     environment:
       JWT_ENABLED: "true"
-      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+      JWT_SECRET: ${SERVICE_PASSWORD_64_ONLYOFFICE}
       JWT_HEADER: Authorization
-      # Lets ONLYOFFICE fetch files from and call back to the API on the
-      # private compose network.
       ALLOW_PRIVATE_IP_ADDRESS: "true"
-    ports:
-      - "${ONLYOFFICE_PORT:-8082}:80"
+    expose:
+      - 80
     volumes:
       - onlyoffice-data:/var/www/onlyoffice/Data
       - onlyoffice-logs:/var/log/onlyoffice
