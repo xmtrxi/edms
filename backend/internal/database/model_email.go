@@ -15,4 +15,7 @@ type EmailDelivery struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	DeliveredAt time.Time `json:"delivered_at,omitempty"`
+	// MessageID is the Message-ID header, which provider callbacks quote.
+	MessageID string     `json:"message_id,omitempty"`
+	SentAt    *time.Time `json:"sent_at,omitempty"`
 }
