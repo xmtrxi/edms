@@ -1,7 +1,20 @@
 export interface ApiError {
+  statusCode?: number;
   error: string;
   message?: string;
-  statusCode?: number;
+}
+
+export interface ApiMeta {
+  page?: number;
+  page_size?: number;
+  total: number;
+  has_more?: boolean;
+}
+
+export interface ApiResponse<T> {
+  data: T;
+  message?: string;
+  meta?: ApiMeta;
 }
 
 // ── Auth ────────────────────────────────────────────────────────────────────
@@ -15,27 +28,8 @@ export interface RegisterRequest {
   name: string;
   email: string;
   password: string;
+  organization_name?: string;
 }
-
-export interface AuthResponse {
-  user: User;
-  token: string;
-}
-
-// ── Tenants ─────────────────────────────────────────────────────────────────
-
-export type TenantStatus = "active" | "disabled";
-
-export interface Tenant {
-  id: string;
-  name: string;
-  slug: string;
-  status: TenantStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-// ── Users ───────────────────────────────────────────────────────────────────
 
 export type UserStatus = "active" | "disabled";
 
@@ -44,112 +38,281 @@ export interface User {
   email: string;
   name: string;
   status: UserStatus;
-  created_at?: string;
-  updated_at?: string;
-}
-
-// ── Tenant Members ──────────────────────────────────────────────────────────
-
-export type TenantRole = "owner" | "admin" | "member";
-
-export interface TenantMember {
-  id: string;
-  tenant_id: string;
-  user_id: string;
-  role: TenantRole;
+  email_verified?: boolean;
+  mfa_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
 
-export interface TenantMemberWithUser extends TenantMember {
-  user?: User;
+export interface AuthResponse {
+  token?: string;
+  user: User;
+  organization: Organization;
+  /** Two-step sign-in: exchange mfa_token and a code at /auth/login/mfa. */
+  mfa_required?: boolean;
+  mfa_token?: string;
+  /** The new account must confirm its email before it can sign in. */
+  verification_required?: boolean;
+}
+
+/** What happened when the person submitted the sign-in form. */
+export type LoginOutcome = "signed-in" | "mfa" | "unverified" | "failed";
+
+export type SessionMethod = "password" | "sso" | "signup" | "invite";
+
+/** One place the person is signed in. */
+export interface AccountSession {
+  id: string;
+  method: SessionMethod;
+  ip?: string;
+  user_agent?: string;
+  created_at: string;
+  last_seen_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+export interface MFASetup {
+  secret: string;
+  /** otpauth:// URI for authenticator apps. */
+  uri: string;
+}
+
+// ── Organizations ──────────────────────────────────────────────────────────
+
+export type DeploymentMode = "saas" | "selfhosted";
+
+/** Public description of the installation, from GET /meta. */
+export interface DeploymentMeta {
+  mode: DeploymentMode;
+  open_signup: boolean;
+  personal_workspaces: boolean;
+  multi_org: boolean;
+  organization_name?: string;
+  /** Single sign-on through the organization's identity provider. */
+  sso?: boolean;
+  sso_label?: string;
+  /** False when single sign-on is the only way in. */
+  password_login?: boolean;
+  require_verified_email?: boolean;
+  /** Product name from APP_NAME. */
+  app_name?: string;
+  version?: string;
+}
+
+export type OrganizationKind = "personal" | "organization";
+export type MembershipRole = "owner" | "admin" | "member" | "guest";
+export type MembershipStatus = "active" | "suspended";
+
+export interface Organization {
+  id: string;
+  slug: string;
+  name: string;
+  kind: OrganizationKind;
+  role?: MembershipRole;
+  created_at: string;
+}
+
+export interface SessionResponse {
+  user: User;
+  organization: Organization;
+  organizations: Organization[];
+}
+
+export interface SwitchOrganizationResponse {
+  token: string;
+  organization: Organization;
+}
+
+export interface Member {
+  id: string;
+  user_id: string;
+  email: string;
+  name: string;
+  role: MembershipRole;
+  status: MembershipStatus;
+  joined_at: string;
+  invited_by?: string;
+  /** "agent" for AI agent accounts that act through MCP. */
+  kind?: string;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  name: string;
+  role: MembershipRole;
+  status: string;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface InvitationPreview {
+  email: string;
+  name: string;
+  role: MembershipRole;
+  organization_name: string;
+  account_exists: boolean;
+}
+
+// ── Administration & forms ─────────────────────────────────────────────────
+
+export interface Role {
+  id: string;
+  key: string;
+  name: string;
+  description?: string;
+  protected: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormField {
+  id: string;
+  label: string;
+  type: "text" | "textarea" | "number" | "currency" | "date" | "select" | "checkbox" | "file";
+  required?: boolean;
+  options?: string[];
+}
+
+export interface ApprovalStepDefinition {
+  name: string;
+  completion_rule: "any_one" | "everyone";
+  user_ids?: string[];
+  department_ids?: string[];
+}
+
+export interface FormDefinition {
+  allowed_department_ids: string[];
+  fields: FormField[];
+  approval_steps: ApprovalStepDefinition[];
+}
+
+export interface FormTemplate {
+  id: string;
+  department_id: string;
+  name: string;
+  description?: string;
+  status: "draft" | "published" | "archived";
+  version: number;
+  definition: FormDefinition;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormSubmission {
+  id: string;
+  template_id: string;
+  template_version: number;
+  department_id: string;
+  submitted_by: string;
+  status: "awaiting_approval" | "returned" | "approved" | "rejected";
+  values: Record<string, unknown>;
+  definition: FormDefinition;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FormComment {
+  id: string;
+  submission_id: string;
+  author_id: string;
+  body: string;
+  created_at: string;
+}
+
+export interface FormApprovalStep {
+  id: string;
+  submission_id: string;
+  sequence: number;
+  name: string;
+  completion_rule: "any_one" | "everyone";
+  status: "pending" | "active" | "approved";
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface FormApprovalAssignee {
+  id: string;
+  step_id: string;
+  user_id: string;
+  department_id?: string;
+  status: "pending" | "approve" | "reject" | "return";
+  decided_at?: string;
+}
+
+export interface FormSubmissionDocument {
+  id: string;
+  submission_id: string;
+  document_id: string;
+  created_at: string;
+}
+
+export interface FormSubmissionDetail {
+  submission: FormSubmission;
+  steps: FormApprovalStep[];
+  assignees: FormApprovalAssignee[];
+  comments: FormComment[];
+  documents: FormSubmissionDocument[];
+}
+
+export interface VisitorRequest {
+  id: string;
+  template_id: string;
+  department_id: string;
+  visitor_name: string;
+  visitor_email: string;
+  submission_id?: string;
+  status: "awaiting_visitor" | "submitted" | "revoked";
+  expires_at: string;
+  created_at: string;
+}
+
+export interface VisitorRequestCreated {
+  request: VisitorRequest;
+  access_code: string;
+  public_url: string;
+}
+
+export interface VisitorApprovalStep {
+  id: string;
+  submission_id: string;
+  sequence: number;
+  name: string;
+  completion_rule: "any_one" | "everyone";
+  status: "pending" | "active" | "approved";
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface VisitorPortal {
+  request: VisitorRequest;
+  template: FormTemplate;
+  submission?: FormSubmission;
+  steps: VisitorApprovalStep[];
 }
 
 // ── Documents ───────────────────────────────────────────────────────────────
 
-export type DocumentStatus = "uploaded" | "processing" | "ready" | "failed" | "archived";
+export type DocumentStatus =
+  | "uploaded"
+  | "processing"
+  | "ready"
+  | "failed"
+  | "archived"
+  | "trashed";
 
-export interface Document {
-  id: string;
-  tenant_id: string;
-  owner_id: string;
-  name: string;
-  original_name: string;
-  mime_type: string;
-  size: number;
-  storage_provider: string;
-  storage_path: string;
-  checksum: string;
-  status: DocumentStatus;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DocumentListResponse {
-  items: DocumentResponse[];
-}
-
-export interface DocumentResponse {
+export interface DocumentOwner {
   id: string;
   name: string;
-  mime_type: string;
-  size: number;
-  status: string;
-  created_at: string;
-  updated_at: string;
+  email: string;
 }
 
-export interface DocumentUploadPayload {
-  file: File;
-  name?: string;
-}
-
-// ── Document Versions ───────────────────────────────────────────────────────
-
-export interface DocumentVersion {
-  id: string;
-  document_id: string;
-  version: number;
-  storage_provider: string;
-  storage_path: string;
-  checksum: string;
-  size: number;
-  created_by: string;
-  created_at: string;
-}
-
-// ── Tags ────────────────────────────────────────────────────────────────────
-
-export interface Tag {
-  id: string;
-  tenant_id: string;
-  name: string;
-  color: string;
-  created_at: string;
-  updated_at: string;
-}
-
-// ── Document Tags ───────────────────────────────────────────────────────────
-
-export interface DocumentTag {
-  id: string;
-  document_id: string;
-  tag_id: string;
-  created_by: string;
-  created_at: string;
-}
-
-export interface DocumentTagWithName extends DocumentTag {
-  tag?: Tag;
-}
-
-// ── Document Extractions ────────────────────────────────────────────────────
-
-export interface DocumentExtraction {
-  id: string;
+export interface OCRResponse {
   document_id: string;
   text: string;
+  markdown: string;
   language: string;
   pages: number;
   metadata: Record<string, unknown>;
@@ -157,121 +320,428 @@ export interface DocumentExtraction {
   updated_at: string;
 }
 
-// ── Comments ────────────────────────────────────────────────────────────────
-
-export interface Comment {
-  id: string;
-  document_id: string;
-  author_id: string;
-  body: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CommentWithAuthor extends Comment {
-  author?: User;
-}
-
-// ── Shares ──────────────────────────────────────────────────────────────────
-
-export interface Share {
-  id: string;
-  document_id: string;
-  created_by: string;
-  token_hash: string;
-  expires_at: string;
-  revoked_at?: string;
-  created_at: string;
-}
-
-export interface CreateShareRequest {
-  document_id: string;
-  expires_in_hours?: number;
-}
-
-// ── Signing Requests ────────────────────────────────────────────────────────
-
-export type SigningStatus = "draft" | "sent" | "completed" | "cancelled" | "failed";
-
-export interface SigningRequest {
-  id: string;
-  document_id: string;
-  requested_by: string;
-  provider: string;
-  provider_document_id: string;
-  status: SigningStatus;
-  created_at: string;
-  updated_at: string;
-}
-
-// ── Processing Jobs ─────────────────────────────────────────────────────────
-
-export type ProcessingJobStatus = "queued" | "running" | "completed" | "failed";
-
 export interface ProcessingJob {
   id: string;
   document_id: string;
   type: string;
-  status: ProcessingJobStatus;
+  status: "queued" | "running" | "completed" | "failed";
   attempts: number;
-  last_error: string;
-  external_id: string;
-  result: Record<string, unknown>;
+  last_error?: string;
+  external_id?: string;
+  result?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
   completed_at?: string;
 }
 
-// ── Audit Events ───────────────────────────────────────────────────────────
-
-export interface AuditEvent {
+export interface Document {
   id: string;
-  tenant_id: string;
+  name: string;
+  original_name: string;
+  folder_id?: string;
+  folder_path?: string;
+  folder_color?: string;
+  folder_category_ids?: string[];
+  mime_type: string;
+  size: number;
+  status: DocumentStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  owner?: DocumentOwner;
+  shared_with?: DocumentOwner[];
+  ocr?: OCRResponse;
+  category?: Category;
+  current_version_id?: string;
+  version_count: number;
+  sensitivity?: Sensitivity;
+  inherit_permissions?: boolean;
+  /** What the signed-in user may do: view, download, comment, edit, share, delete… */
+  permissions?: string[];
+}
+
+export interface DashboardOverview {
+  total_documents: number;
+  ready_documents: number;
+  pending_forms: number;
+  active_workflows: number;
+  visitor_requests: number;
+  recent_documents: Document[];
+  recent_submissions: FormSubmission[];
+}
+
+export interface DocumentShare {
+  id: string;
+  document_id: string;
+  shared_with_user_id?: string;
+  shared_with_email: string;
+  permission: "view" | "download";
+  expires_at: string;
+  revoked_at?: string;
+  created_at: string;
+}
+
+export interface AIJob {
+  id: string;
+  kind: "classify" | "ask" | "summarize" | "extract";
+  status: "running" | "completed" | "failed";
+  document_ids: string[];
+  result?: Record<string, unknown>;
+  error?: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+export interface DocumentFolder {
+  path: string;
+  name: string;
+  parent_path?: string;
+  color?: string;
+  category_ids?: string[];
+  categories?: Category[];
+  count: number;
+  size: number;
+  updated_at: string;
+}
+
+export interface SearchResultDocument extends Document {
+  snippet?: string;
+  version_id?: string;
+  chunk_index: number;
+  headings?: string[];
+  page_numbers?: number[];
+  page_start?: number;
+  page_end?: number;
+}
+
+export type DocumentVersionSource =
+  | "upload"
+  | "storage_sync"
+  | "onlyoffice_edit"
+  | "stirling_pdf"
+  | "workflow_revision"
+  | "conversion"
+  | "signature"
+  | "restore";
+
+export interface DocumentVersion {
+  id: string;
+  document_id: string;
+  parent_version_id?: string;
+  version: number;
+  file_name: string;
+  mime_type: string;
+  size: number;
+  checksum: string;
+  created_by: string;
+  creator?: User;
+  source: DocumentVersionSource;
+  change_summary: string;
+  change_manifest?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DocumentContributor {
+  user: User;
+  versions_created: number;
+  first_edited_at: string;
+  last_edited_at: string;
+}
+
+export interface DocumentContributors {
+  unique_editor_count: number;
+  edit_count: number;
+  contributors: DocumentContributor[];
+}
+
+export interface DocumentHistoryEvent {
+  id: string;
+  type: string;
   actor_id: string;
   action: string;
   resource: string;
   resource_id: string;
-  metadata: Record<string, unknown>;
+  document_version_id?: string;
+  summary?: string;
+  metadata?: Record<string, unknown>;
   created_at: string;
 }
 
-export interface AuditEventWithActor extends AuditEvent {
-  actor?: User;
+export type WorkflowStatus =
+  | "draft"
+  | "pending"
+  | "active"
+  | "waiting_for_changes"
+  | "waiting_for_signature"
+  | "approved"
+  | "rejected"
+  | "completed"
+  | "canceled";
+
+export interface WorkflowStep {
+  id: string;
+  sequence: number;
+  name: string;
+  action_type: "review" | "approve" | "sign" | "edit" | "acknowledge" | "file";
+  assignment_type: "user" | "department" | "external";
+  assigned_user_id?: string;
+  assigned_department_id?: string;
+  external_email?: string;
+  status: string;
+  require_comment: boolean;
+  require_new_version: boolean;
+  activated_at?: string;
+  completed_at?: string;
 }
 
-// ── Workflow Requests ───────────────────────────────────────────────────────
-
-export type WorkflowStatus = "pending" | "approved" | "rejected" | "canceled";
-
-export interface WorkflowRequest {
+export interface DocumentRoute {
   id: string;
   document_id: string;
-  created_by: string;
+  started_version_id: string;
+  current_version_id: string;
+  title: string;
   status: WorkflowStatus;
+  priority: "low" | "medium" | "high";
+  current_step: number;
+  returned_version_id?: string;
+  due_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+  steps: WorkflowStep[];
+}
+
+export interface CreateDocumentRoute {
+  title: string;
+  priority: "low" | "medium" | "high";
+  due_at?: string;
+  steps: Array<{
+    name: string;
+    action_type: WorkflowStep["action_type"];
+    assignment_type: WorkflowStep["assignment_type"];
+    assigned_user_id?: string;
+    assigned_department_id?: string;
+    external_email?: string;
+    require_comment: boolean;
+    require_new_version: boolean;
+  }>;
+}
+
+export interface RouteDecision {
+  action:
+    | "approve"
+    | "reject"
+    | "return_for_changes"
+    | "resubmit"
+    | "sign"
+    | "acknowledge"
+    | "file";
+  comment?: string;
+  return_to_step?: number;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  description?: string;
+  parent_id?: string;
+  color?: string;
+  document_count: number;
   created_at: string;
   updated_at: string;
 }
 
-export interface WorkflowRequestWithActions extends WorkflowRequest {
-  actions?: WorkflowAction[];
-  created_by_user?: User;
+export interface CategoryInput {
+  name: string;
+  description?: string;
+  parent_id?: string;
+  color?: string;
 }
 
-// ── Workflow Actions ────────────────────────────────────────────────────────
+export interface StorageSyncResult {
+  dry_run: boolean;
+  scanned: number;
+  imported: number;
+  would_import?: number;
+  skipped: number;
+  failed: number;
+  errors?: string[];
+}
 
-export type WorkflowActionKind = "approve" | "reject" | "comment" | "delegate";
+export interface ListDocumentsParams {
+  q?: string;
+  status?: string;
+  category_id?: string;
+  folder_path?: string;
+  folder_id?: string;
+  page?: number;
+  page_size?: number;
+  mode?: "documents" | "passages";
+  document_id?: string;
+  /** Only documents changed in the last N days, written like "30d". */
+  updated_within?: string;
+  /** "recent" lists the most recently changed first. */
+  sort?: "recent";
+}
 
-export interface WorkflowAction {
+export interface ManagedFolder {
   id: string;
-  workflow_request_id: string;
-  actor_id: string;
-  action: WorkflowActionKind;
-  note: string;
+  parent_id?: string;
+  ancestor_ids?: string[];
+  depth: number;
+  name: string;
+  description?: string;
+  color?: string;
+  inherit_permissions: boolean;
+  document_count: number;
+  can_manage?: boolean;
+  can_upload?: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FolderInput {
+  name: string;
+  parent_id?: string;
+  description?: string;
+  color?: string;
+  inherit_permissions?: boolean;
+}
+
+export type FolderRole = "manager" | "editor" | "contributor" | "commenter" | "viewer" | "uploader";
+
+export type PrincipalType = "user" | "department" | "group" | "role" | "everyone";
+
+/** A grant as shown in access lists, with a readable principal name. */
+export interface FolderGrant {
+  id: string;
+  principal_type: PrincipalType;
+  principal_id: string;
+  name: string;
+  description?: string;
+  role: FolderRole;
+  allow?: string[];
+  deny?: string[];
+  /** "folder" for this folder, "inherited" from a parent, "document" for file grants. */
+  source: "folder" | "inherited" | "document";
+  source_name?: string;
+}
+
+export interface FolderGrantInput {
+  principal_type: PrincipalType;
+  principal_id: string;
+  role: FolderRole;
+  allow?: string[];
+  deny?: string[];
+}
+
+export interface PrincipalOption {
+  type: PrincipalType;
+  id: string;
+  name: string;
+  description?: string;
+}
+
+// ── Sharing ────────────────────────────────────────────────────────────────
+
+export type Sensitivity = "public" | "internal" | "confidential" | "restricted";
+export type ShareRole = "viewer" | "commenter" | "editor";
+
+export interface ShareView {
+  id: string;
+  kind: "user" | "email" | "link";
+  user_id?: string;
+  email?: string;
+  name?: string;
+  role: ShareRole;
+  link_scope?: "organization" | "anyone";
+  has_password: boolean;
+  allow_download: boolean;
+  expires_at: string;
   created_at: string;
 }
 
-export interface WorkflowActionWithActor extends WorkflowAction {
-  actor?: User;
+export interface SharePolicy {
+  allow_external: boolean;
+  allow_public_links: boolean;
+  allowed_domains: string[];
+  max_link_days: number;
+}
+
+export interface DocumentAccess {
+  document_id: string;
+  owner_id: string;
+  owner_name: string;
+  folder_id?: string;
+  folder_name?: string;
+  inherit_permissions: boolean;
+  sensitivity: Sensitivity;
+  inherited: FolderGrant[];
+  grants: FolderGrant[];
+  shares: ShareView[];
+  links: ShareView[];
+  policy: SharePolicy;
+  can_share: boolean;
+  pending_requests: number;
+}
+
+export interface ShareResult {
+  kind: "grant" | "user" | "email";
+  link?: string;
+}
+
+export interface AccessRequest {
+  id: string;
+  document_id: string;
+  document_name: string;
+  requester_id: string;
+  requester_name: string;
+  requester_email: string;
+  role: ShareRole;
+  message?: string;
+  status: "pending" | "approved" | "denied";
+  created_at: string;
+}
+
+/** Who can see a new upload. */
+export interface UploadAccess {
+  mode: "inherit" | "private" | "custom";
+  sensitivity?: Sensitivity;
+  grants?: FolderGrantInput[];
+}
+
+export interface LinkDocument {
+  document: Document;
+  role: ShareRole;
+  link_scope?: "organization" | "anyone";
+  can_download: boolean;
+  expires_at: string;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  member_count: number;
+  created_at: string;
+}
+
+export interface GroupMember {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+export interface Department {
+  id: string;
+  parent_id?: string;
+  name: string;
+  description?: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // ── Health ──────────────────────────────────────────────────────────────────
@@ -284,17 +754,368 @@ export interface HealthResponse {
   updated_at?: string;
 }
 
-// ── Pagination ──────────────────────────────────────────────────────────────
+// ── Viewer ─────────────────────────────────────────────────────────────────
 
-export interface PaginationParams {
-  page?: number;
-  per_page?: number;
+/** Size of one PDF page in points (1/72 inch), used to place overlays. */
+export interface PdfPageSize {
+  width: number;
+  height: number;
 }
 
-export interface PaginatedResponse<T> {
-  items: T[];
-  total: number;
+export type PreviewKind = "pdf" | "image" | "text" | "video" | "audio";
+
+// ── Drive ──────────────────────────────────────────────────────────────────
+
+export interface FileRequest {
+  id: string;
+  folder_id: string;
+  title: string;
+  instructions?: string;
+  max_files: number;
+  received_files: number;
+  expires_at: string;
+  closed: boolean;
+  created_at: string;
+  /** Only returned when the request is created. */
+  url?: string;
+}
+
+export interface PublicFileRequest {
+  title: string;
+  instructions?: string;
+  organization: string;
+  requested_by: string;
+  remaining: number;
+  expires_at: string;
+}
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  last_used_at?: string;
+  expires_at?: string;
+  created_at: string;
+  /** Only returned when the token is created. */
+  secret?: string;
+}
+
+// ── Assistant ──────────────────────────────────────────────────────────────
+
+export interface AICitation {
+  index: number;
+  document_id: string;
+  document_name: string;
+  version_id?: string;
+  page_start?: number;
+  page_end?: number;
+  snippet: string;
+}
+
+export interface AIAnswer {
+  answer: string;
+  citations: AICitation[];
+  sources: AICitation[];
+}
+
+// ── Signatures ─────────────────────────────────────────────────────────────
+
+export type SignatureFieldKind = "signature" | "initials" | "date" | "name" | "text" | "checkbox";
+export type EnvelopeStatus = "sent" | "completed" | "declined" | "voided";
+export type RecipientStatus = "waiting" | "sent" | "viewed" | "signed" | "declined";
+
+export interface SignatureRecipient {
+  id: string;
+  name: string;
+  email: string;
+  role: "signer" | "viewer";
+  position: number;
+  status: RecipientStatus;
+  viewed_at?: string;
+  signed_at?: string;
+  declined_at?: string;
+  decline_reason?: string;
+  /** Only included for the sender while the request is open. */
+  link?: string;
+}
+
+export interface SignatureField {
+  id: string;
+  recipient_id: string;
+  kind: SignatureFieldKind;
   page: number;
-  per_page: number;
-  total_pages: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  required: boolean;
+  label?: string;
+  filled: boolean;
+  value?: string;
+}
+
+export interface SignatureEvent {
+  action: string;
+  actor?: string;
+  detail?: string;
+  ip?: string;
+  created_at: string;
+}
+
+export interface SignatureEnvelope {
+  id: string;
+  document_id: string;
+  document_name?: string;
+  title: string;
+  message?: string;
+  status: EnvelopeStatus;
+  sequential: boolean;
+  require_otp: boolean;
+  pages: number;
+  created_by: string;
+  sender_name?: string;
+  completed_version_id?: string;
+  completed_at?: string;
+  void_reason?: string;
+  expires_at: string;
+  created_at: string;
+  recipients: SignatureRecipient[];
+  fields?: SignatureField[];
+  events?: SignatureEvent[];
+  signing_link?: string;
+}
+
+export interface EnvelopeDraft {
+  title: string;
+  message: string;
+  sequential: boolean;
+  require_otp: boolean;
+  recipients: Array<{ name: string; email: string; role: "signer" | "viewer" }>;
+  fields: Array<{
+    recipient: number;
+    kind: SignatureFieldKind;
+    page: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    required?: boolean;
+    label?: string;
+  }>;
+}
+
+export interface SigningSession {
+  envelope: SignatureEnvelope;
+  recipient: SignatureRecipient;
+  organization?: string;
+  verified: boolean;
+  can_sign: boolean;
+  waiting_on?: string;
+  fields: SignatureField[];
+}
+
+// ── Comments ───────────────────────────────────────────────────────────────
+
+export interface PersonRef {
+  id: string;
+  name: string;
+  email?: string;
+}
+
+export interface DocumentComment {
+  id: string;
+  document_id: string;
+  parent_id?: string;
+  author: PersonRef;
+  body: string;
+  page?: number;
+  quote?: string;
+  mentions?: PersonRef[];
+  edited: boolean;
+  resolved: boolean;
+  resolved_by?: PersonRef;
+  resolved_at?: string;
+  created_at: string;
+  can_edit: boolean;
+  can_resolve: boolean;
+}
+
+export interface EditorSession {
+  document_server_url: string;
+  mode: "edit" | "view";
+  config: Record<string, unknown>;
+}
+
+// ── Automation and retention ───────────────────────────────────────────────
+
+export type AutomationTrigger =
+  | "document.created"
+  | "document.labelled"
+  | "version.created"
+  | "signature.completed";
+export type AutomationActionType = "move_to_folder" | "set_sensitivity" | "grant_access" | "notify";
+
+export interface AutomationCondition {
+  name_contains?: string;
+  extensions?: string[];
+  sensitivity?: Sensitivity | "";
+  classification?: string;
+  sensitive_data?: boolean;
+}
+
+export interface AutomationAction {
+  type: AutomationActionType;
+  folder_id?: string;
+  sensitivity?: Sensitivity;
+  principal_type?: PrincipalType;
+  principal_id?: string;
+  principal_name?: string;
+  role?: ShareRole;
+  emails?: string[];
+  message?: string;
+}
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: AutomationTrigger;
+  folder_id?: string;
+  conditions: AutomationCondition;
+  actions: AutomationAction[];
+  run_count: number;
+  last_run_at?: string;
+  created_at: string;
+}
+
+export interface AutomationRun {
+  id: string;
+  rule_id: string;
+  document_id: string;
+  trigger: AutomationTrigger;
+  status: "ok" | "failed";
+  detail?: string;
+  created_at: string;
+}
+
+export type RetentionAction = "archive" | "trash" | "purge";
+
+export interface RetentionPolicy {
+  id: string;
+  name: string;
+  enabled: boolean;
+  folder_id?: string;
+  sensitivity?: Sensitivity;
+  age_basis: "created" | "modified";
+  keep_days: number;
+  action: RetentionAction;
+  last_run_at?: string;
+  last_count: number;
+  created_at: string;
+}
+
+export interface RetentionPreview {
+  count: number;
+  held: number;
+  sample: Document[];
+}
+
+// ── Notifications ──────────────────────────────────────────────────────────
+
+export type NotificationKind =
+  | "share"
+  | "mention"
+  | "access_request"
+  | "access_decision"
+  | "route_step"
+  | "route_outcome"
+  | "form_approval"
+  | "form_outcome"
+  | "signature"
+  | "file_received";
+
+export interface AppNotification {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  body?: string;
+  /** App path to open, such as /documents/documents:abc. */
+  link?: string;
+  actor?: { id: string; name: string; email?: string };
+  read_at?: string;
+  created_at: string;
+}
+
+export interface NotificationPage {
+  items: AppNotification[];
+  unread: number;
+}
+
+// ── PDF tools ──────────────────────────────────────────────────────────────
+
+export type PdfOperation = "merge" | "compress" | "rotate" | "watermark" | "page_numbers";
+export type PdfJobStatus = "queued" | "running" | "retrying" | "succeeded" | "failed";
+
+export interface PdfOptions {
+  level?: number;
+  angle?: number;
+  text?: string;
+  opacity?: number;
+  position?: number;
+}
+
+export interface PdfJob {
+  id: string;
+  operation: PdfOperation;
+  document_ids: string[];
+  options?: PdfOptions;
+  output_name?: string;
+  status: PdfJobStatus;
+  attempts: number;
+  error?: string;
+  result_document_id?: string;
+  result_version_id?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+// ── Integrations ───────────────────────────────────────────────────────────
+
+export interface IntegrationCheck {
+  name: string;
+  status: "ok" | "warning" | "failing";
+  detail: string;
+  count?: number;
+  fixable?: boolean;
+}
+
+export interface QueueStats {
+  queue: string;
+  pending: number;
+  active: number;
+  scheduled: number;
+  retry: number;
+  dead: number;
+  processed_today: number;
+  failed_today: number;
+  paused: boolean;
+}
+
+export interface DeadTask {
+  id: string;
+  queue: string;
+  type: string;
+  payload?: Record<string, unknown>;
+  last_error: string;
+  retried: number;
+  failed_at: string;
+}
+
+export interface ReconcileResult {
+  emails: number;
+  ocr: number;
+  pdf_jobs: number;
+  dead_tasks: number;
 }

@@ -11,21 +11,44 @@ import (
 func TestMigrationsAreRegisteredInOrder(t *testing.T) {
 	migrations := Migrations()
 	expected := []string{
-		"001_create_tenants_table",
-		"002_create_users_table",
-		"003_create_tenant_members_table",
-		"004_create_documents_table",
-		"005_create_document_versions_table",
-		"006_create_tags_table",
-		"007_create_document_tags_table",
-		"008_create_document_extractions_table",
-		"009_create_comments_table",
-		"010_create_shares_table",
-		"011_create_signing_requests_table",
-		"012_create_processing_jobs_table",
-		"013_create_audit_events_table",
-		"014_create_workflow_requests_table",
-		"015_create_workflow_actions_table",
+		"001_create_users_table",
+		"002_create_documents_table",
+		"003_create_document_versions_table",
+		"004_create_tags_table",
+		"005_create_document_tags_table",
+		"006_create_document_extractions_table",
+		"007_create_comments_table",
+		"008_create_shares_table",
+		"009_create_signing_requests_table",
+		"010_create_processing_jobs_table",
+		"011_create_audit_events_table",
+		"012_create_workflow_requests_table",
+		"013_create_workflow_actions_table",
+		"014_create_categories_table",
+		"015_create_document_categories_table",
+		"016_expand_versioning_and_routing",
+		"017_expand_signing_routing",
+		"018_add_folders_and_document_folder_id",
+		"019_add_casbin_access_and_forms",
+		"020_make_processing_job_completion_optional",
+		"021_add_visitor_requests",
+		"022_add_visitor_operations",
+		"023_add_workspace_operations",
+		"024_add_ai_jobs",
+		"025_add_email_delivery",
+		"026_add_organizations",
+		"027_add_access_model",
+		"028_add_drive_features",
+		"029_add_agent_accounts",
+		"030_add_native_signing",
+		"031_add_collaboration",
+		"032_add_automation",
+		"033_add_retention",
+		"034_add_account_security",
+		"035_add_notifications",
+		"036_add_pdf_jobs",
+		"037_add_m365_sessions",
+		"038_add_email_events",
 	}
 	if len(migrations) != len(expected) {
 		t.Fatalf("expected %d migrations, got %d", len(expected), len(migrations))
@@ -58,5 +81,20 @@ func TestUserTableDefinitionUsesSurrealORMBuilder(t *testing.T) {
 		if !strings.Contains(sql, part) {
 			t.Fatalf("expected SQL to contain %q, got:\n%s", part, sql)
 		}
+	}
+}
+
+func TestNormalizeTableTypesUsesSurrealDBBooleanKind(t *testing.T) {
+	table := &surrealgoorm.Table{Name: "settings"}
+	table.Bool("enabled").Default(true)
+
+	normalizeTableTypes(table)
+
+	sql := table.Build()
+	if !strings.Contains(sql, "DEFINE FIELD enabled ON settings type bool DEFAULT true") {
+		t.Fatalf("expected bool field in SQL, got:\n%s", sql)
+	}
+	if strings.Contains(sql, "type boolean") {
+		t.Fatalf("unexpected invalid boolean kind in SQL:\n%s", sql)
 	}
 }

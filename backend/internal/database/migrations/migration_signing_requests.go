@@ -9,7 +9,7 @@ import (
 
 type createSigningRequestsTable struct{}
 
-func (m createSigningRequestsTable) Name() string { return "011_create_signing_requests_table" }
+func (m createSigningRequestsTable) Name() string { return "009_create_signing_requests_table" }
 
 func (m createSigningRequestsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "signing_requests", func(t *surrealgoorm.Table) {

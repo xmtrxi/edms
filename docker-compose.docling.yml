@@ -1,0 +1,31 @@
+services:
+  docling-api:
+    image: ghcr.io/docling-project/docling-serve-cpu:latest
+    network_mode: host
+    env_file:
+      - .env.docling
+    environment:
+      DOCLING_SERVE_ENG_KIND: rq
+      DOCLING_SERVE_ENG_RQ_REDIS_URL: redis://127.0.0.1:6379/0
+      # Built-in Gradio conversion playground, available at /ui.
+      DOCLING_SERVE_ENABLE_UI: "true"
+      DOCLING_SERVE_LOAD_MODELS_AT_BOOT: "true"
+      DOCLING_SERVE_MAX_FILE_SIZE: "104857600"
+      DOCLING_SERVE_MAX_NUM_PAGES: "200"
+      DOCLING_SERVE_DOCUMENT_TIMEOUT: "600"
+
+  docling-worker:
+    image: ghcr.io/docling-project/docling-serve-cpu:latest
+    network_mode: host
+    command: ["docling-serve", "rq-worker"]
+    environment:
+      DOCLING_SERVE_ENG_KIND: rq
+      DOCLING_SERVE_ENG_RQ_REDIS_URL: redis://127.0.0.1:6379/0
+    depends_on:
+      - docling-api
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    ports:
+      - "6000:3000"
+    command: ["gotenberg", "--api-port=3000"]

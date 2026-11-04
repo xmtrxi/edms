@@ -7,16 +7,20 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/labstack/echo/v5"
+
 	"github.com/xmtrxi/edms/internal/config"
+	"github.com/xmtrxi/edms/internal/handler"
 )
 
 func TestHealthReportsSigningDisabledByDefault(t *testing.T) {
-	server := New(config.Config{
+	cfg := config.Config{
 		App: config.AppConfig{
 			Env:  "test",
 			Port: "0",
 		},
-	})
+	}
+	server := New(cfg, handler.Deps{Cfg: cfg})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -44,7 +48,7 @@ func TestHealthReportsSigningDisabledByDefault(t *testing.T) {
 }
 
 func TestSigningRouteIsOptIn(t *testing.T) {
-	disabled := New(config.Config{})
+	disabled := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
 	disabledReq := httptest.NewRequest(http.MethodPost, "/api/documents/documents:1/sign", nil)
 	disabledRec := httptest.NewRecorder()
 	disabled.Handler().ServeHTTP(disabledRec, disabledReq)
@@ -53,22 +57,58 @@ func TestSigningRouteIsOptIn(t *testing.T) {
 		t.Fatalf("expected disabled signing route status %d, got %d", http.StatusNotFound, disabledRec.Code)
 	}
 
-	enabled := New(config.Config{
+	enabledCfg := config.Config{
 		Signing: config.SigningConfig{
 			Enabled: true,
 		},
-	})
+	}
+	enabled := New(enabledCfg, handler.Deps{Cfg: enabledCfg})
 	enabledReq := httptest.NewRequest(http.MethodPost, "/api/documents/documents:1/sign", nil)
 	enabledRec := httptest.NewRecorder()
 	enabled.Handler().ServeHTTP(enabledRec, enabledReq)
 
-	if enabledRec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected enabled signing route status %d, got %d", http.StatusNotImplemented, enabledRec.Code)
+	if enabledRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected signing route to require auth (401), got %d", enabledRec.Code)
+	}
+}
+
+func TestCategoryRoutesRequireAuth(t *testing.T) {
+	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
+	for _, test := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/categories"},
+		{http.MethodPost, "/api/categories"},
+		{http.MethodPut, "/api/categories/categories:1"},
+		{http.MethodDelete, "/api/categories/categories:1"},
+	} {
+		req := httptest.NewRequest(test.method, test.path, nil)
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401, got %d", test.method, test.path, rec.Code)
+		}
+	}
+}
+
+func TestFolderRoutesRequireAuth(t *testing.T) {
+	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
+	for _, test := range []struct{ method, path string }{
+		{http.MethodGet, "/api/folders"}, {http.MethodPost, "/api/folders"},
+		{http.MethodPut, "/api/folders/folders:1"}, {http.MethodDelete, "/api/folders/folders:1"},
+	} {
+		req := httptest.NewRequest(test.method, test.path, nil)
+		rec := httptest.NewRecorder()
+		server.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s: expected 401, got %d", test.method, test.path, rec.Code)
+		}
 	}
 }
 
 func TestOpenAPIDocsAreServed(t *testing.T) {
-	server := New(config.Config{})
+	server := New(config.Config{}, handler.Deps{Cfg: config.Config{}})
 
 	specReq := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	specRec := httptest.NewRecorder()
@@ -90,5 +130,19 @@ func TestOpenAPIDocsAreServed(t *testing.T) {
 	}
 	if !strings.Contains(docsRec.Body.String(), "SwaggerUIBundle") {
 		t.Fatalf("expected swagger ui html, got %q", docsRec.Body.String())
+	}
+}
+
+func TestEncodedRecordIDsInPaths(t *testing.T) {
+	e := echo.NewWithConfig(echo.Config{Router: echo.NewRouter(echo.RouterConfig{UnescapePathParamValues: true})})
+	var got string
+	e.GET("/comments/:id", func(c *echo.Context) error {
+		got = c.Param("id")
+		return c.NoContent(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/comments/comments%3Aabc", nil)
+	e.ServeHTTP(httptest.NewRecorder(), req)
+	if got != "comments:abc" {
+		t.Fatalf("param = %q, want comments:abc", got)
 	}
 }

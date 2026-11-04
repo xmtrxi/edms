@@ -8,7 +8,7 @@ import (
 
 type createCommentsTable struct{}
 
-func (m createCommentsTable) Name() string { return "009_create_comments_table" }
+func (m createCommentsTable) Name() string { return "007_create_comments_table" }
 
 func (m createCommentsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "comments", func(t *surrealgoorm.Table) {

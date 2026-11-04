@@ -3,8 +3,7 @@ package database
 import "time"
 
 type Tag struct {
-	ID        string    `json:"id,omitempty"`
-	TenantID  string    `json:"tenant_id"`
+	ID        RecordID  `json:"id,omitempty"`
 	Name      string    `json:"name"`
 	Color     string    `json:"color"`
 	CreatedAt time.Time `json:"created_at"`

@@ -3,7 +3,7 @@ package database
 import "time"
 
 type DocumentTag struct {
-	ID         string    `json:"id,omitempty"`
+	ID         RecordID  `json:"id,omitempty"`
 	DocumentID string    `json:"document_id"`
 	TagID      string    `json:"tag_id"`
 	CreatedBy  string    `json:"created_by"`

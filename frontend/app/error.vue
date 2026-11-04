@@ -15,14 +15,14 @@
     ? "The page you're looking for doesn't exist or has been moved."
     : (props.error?.message ?? props.error?.statusMessage ?? "An unexpected error occurred.");
 
-  function goHome() {
+  const goHome = () => {
     const { $router } = useNuxtApp();
     $router.push("/");
-  }
+  };
 
-  function reload() {
+  const reload = () => {
     window.location.reload();
-  }
+  };
 </script>
 
 <template>

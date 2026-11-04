@@ -8,7 +8,7 @@ import (
 
 type createDocumentVersionsTable struct{}
 
-func (m createDocumentVersionsTable) Name() string { return "005_create_document_versions_table" }
+func (m createDocumentVersionsTable) Name() string { return "003_create_document_versions_table" }
 
 func (m createDocumentVersionsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "document_versions", func(t *surrealgoorm.Table) {

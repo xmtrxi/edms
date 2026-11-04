@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Start SurrealDB
+        working-directory: .
+        run: |
+          docker run -d --name surrealdb -p 8000:8000 surrealdb/surrealdb:v3.3.4 \
+            start --user root --pass root --bind 0.0.0.0:8000 memory
+          for i in $(seq 1 30); do curl -fs http://127.0.0.1:8000/health && exit 0; sleep 1; done
+          docker logs surrealdb; exit 1
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        env:
+          EDMS_TEST_SURREALDB_URL: ws://127.0.0.1:8000/rpc
+          EDMS_TEST_VALKEY_URL: redis://127.0.0.1:6379
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          working-directory: backend
+          only-new-issues: true
+
+      - name: Build
+        run: go build -trimpath -o bin/api ./cmd/api
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm fmt:check
+      - run: pnpm lint
+      - run: pnpm build

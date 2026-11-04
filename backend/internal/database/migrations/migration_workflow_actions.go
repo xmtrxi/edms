@@ -8,7 +8,7 @@ import (
 
 type createWorkflowActionsTable struct{}
 
-func (m createWorkflowActionsTable) Name() string { return "015_create_workflow_actions_table" }
+func (m createWorkflowActionsTable) Name() string { return "013_create_workflow_actions_table" }
 
 func (m createWorkflowActionsTable) Up(ctx context.Context, schema surrealgoorm.Schema) error {
 	return createTable(ctx, schema, "workflow_actions", func(t *surrealgoorm.Table) {
