@@ -16,6 +16,7 @@ const (
 	orgKey        = "edms.org"
 	membershipKey = "edms.membership"
 	tokenKey      = "edms.api_token"
+	sessionKey    = "edms.session"
 )
 
 // RequireAuth authenticates the bearer token and resolves the organization the
@@ -55,15 +56,13 @@ func RequireAuth(auth *service.AuthService) echo.MiddlewareFunc {
 				claims, user = service.TokenClaims{UserID: string(tokenUser.ID), OrgID: token.OrgID}, tokenUser
 				c.Set(tokenKey, token)
 			} else {
-				parsed, err := auth.ParseToken(bearer)
-				if err != nil || parsed.UserID == "" {
+				// Session token: rejected once signed out, revoked or expired.
+				parsed, sessionUser, err := auth.Authenticate(ctx, bearer)
+				if err != nil {
 					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
 				}
-				claims = parsed
-				user, err = auth.UserByID(ctx, claims.UserID)
-				if err != nil || user == nil || user.Status != database.UserStatusActive {
-					return echo.NewHTTPError(http.StatusUnauthorized, "invalid token")
-				}
+				claims, user = parsed, sessionUser
+				c.Set(sessionKey, parsed.SessionID)
 			}
 
 			org, membership, err := auth.Orgs.Resolve(ctx, user, claims.OrgID)
@@ -114,6 +113,13 @@ func CurrentMembership(c *echo.Context) *database.Membership {
 func IsOrgAdmin(c *echo.Context) bool {
 	membership := CurrentMembership(c)
 	return membership != nil && (membership.Role == database.MembershipRoleOwner || membership.Role == database.MembershipRoleAdmin)
+}
+
+// CurrentSessionID is the sign-in behind this request; empty for personal
+// access tokens.
+func CurrentSessionID(c *echo.Context) string {
+	id, _ := c.Get(sessionKey).(string)
+	return id
 }
 
 // CurrentAPIToken is the personal access token used for this request, if any.
